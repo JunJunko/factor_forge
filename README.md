@@ -44,3 +44,12 @@ python -m pytest -q
 ```
 
 测试包含人工可核对的小样本：DSL 滞后语义、禁止任意 Python、T+1 成交、涨停买入失败、跌停卖出顺延、版本哈希，以及从 YAML 到最终评分产物的完整链路。
+# Factor combinations
+
+The existing two-YAML command also accepts `kind: factor_combination`:
+
+```bash
+factor-forge run --factor configs/combinations/short_term_alpha_combo_v1.yaml --experiment configs/experiments/short_term_alpha_combo_l1.yaml
+```
+
+Atomic factor YAML files remain valid with no `kind` field. Combination YAML files reference them by path; the platform computes or reuses their raw cache automatically.

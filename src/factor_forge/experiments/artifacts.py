@@ -8,7 +8,12 @@ import pandas as pd
 import yaml
 
 
-def _json_default(value):
+def json_default(value):
+    """Serialize numpy/pandas/Path scalars that stdlib json can't handle.
+
+    Shared by artifact dumps and the CLI result echo, so a numpy ``bool_``
+    leaking out of ``AlphaScorer.score`` never crashes a successful run.
+    """
     if isinstance(value, (np.bool_,)): return bool(value)
     if isinstance(value, (np.integer,)): return int(value)
     if isinstance(value, (np.floating,)): return None if not np.isfinite(value) else float(value)
@@ -25,7 +30,7 @@ class RunArtifacts:
     def json(self, relative: str, value) -> None:
         path = self.path / relative
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(value, ensure_ascii=False, indent=2, default=_json_default), encoding="utf-8")
+        path.write_text(json.dumps(value, ensure_ascii=False, indent=2, default=json_default), encoding="utf-8")
 
     def yaml(self, relative: str, value) -> None:
         path = self.path / relative
@@ -36,6 +41,11 @@ class RunArtifacts:
         path = self.path / relative
         path.parent.mkdir(parents=True, exist_ok=True)
         frame.to_parquet(path, index=False)
+
+    def csv(self, relative: str, frame: pd.DataFrame) -> None:
+        path = self.path / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        frame.to_csv(path, index=False, encoding="utf-8-sig")
 
     def text(self, relative: str, value: str) -> None:
         path = self.path / relative

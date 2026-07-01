@@ -110,7 +110,16 @@ class TushareIngestor:
         }
         for name in dataset_names:
             files = sorted((staging / name).glob("trade_date=*.parquet"))
-            frames = [pd.read_parquet(path, columns=required_columns[name]) for path in files]
+            frames = []
+            for path in files:
+                # A partition may be a degenerate empty file (only the trade_date
+                # partition column, zero rows) when an upstream query returned
+                # nothing for that day. Skip it — empty partitions contribute no
+                # rows; reindex guarantees the required column set otherwise.
+                frame = pd.read_parquet(path)
+                if frame.empty:
+                    continue
+                frames.append(frame.reindex(columns=required_columns[name]))
             result[name] = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
         result["stock_basic"] = stocks
         result["trade_calendar"] = calendar

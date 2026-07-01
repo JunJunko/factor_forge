@@ -16,3 +16,11 @@ class DSLValidationError(FactorForgeError):
 
 class GateRejected(FactorForgeError):
     """A staged experiment stopped at its configured gate."""
+
+
+class UnsupportedFactorKindError(ContractError):
+    """The factor YAML declares an unsupported ``kind``."""
+
+
+class FactorCombinationError(ContractError):
+    """A factor combination failed validation or execution."""

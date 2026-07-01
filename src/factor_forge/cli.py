@@ -10,6 +10,7 @@ from factor_forge.data.ingestion import TushareIngestor
 from factor_forge.data.metadata import MetadataStore
 from factor_forge.data.tushare_provider import TushareProvider
 from factor_forge.experiments import ExperimentRunner
+from factor_forge.experiments.artifacts import json_default
 
 
 app = typer.Typer(help="Reusable A-share daily factor research platform")
@@ -32,7 +33,7 @@ def data_init(config: Path = typer.Option(Path("configs/project.yaml"))):
 def check_permissions(config: Path = typer.Option(Path("configs/project.yaml"))):
     project = load_project(config)
     report = TushareIngestor(project, TushareProvider()).check_permissions()
-    typer.echo(json.dumps(report, ensure_ascii=False, indent=2))
+    typer.echo(json.dumps(report, ensure_ascii=False, indent=2, default=json_default))
 
 
 @data_app.command("ingest")
@@ -58,7 +59,17 @@ def factor_validate(path: Path):
 @experiment_app.command("run")
 def experiment_run(path: Path):
     result = ExperimentRunner().run(path)
-    typer.echo(json.dumps(result, ensure_ascii=False, indent=2))
+    typer.echo(json.dumps(result, ensure_ascii=False, indent=2, default=json_default))
+
+
+@app.command("run")
+def run(
+    factor: Path = typer.Option(..., "--factor", help="Stock factor YAML"),
+    experiment: Path = typer.Option(..., "--experiment", help="Experiment YAML"),
+):
+    """Run with the stable two-YAML user protocol."""
+    result = ExperimentRunner().run(experiment, factor_path=factor)
+    typer.echo(json.dumps(result, ensure_ascii=False, indent=2, default=json_default))
 
 
 if __name__ == "__main__":

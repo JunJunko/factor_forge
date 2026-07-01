@@ -1,0 +1,20 @@
+version: 1
+kind: factor
+factor:
+  name: price_strength_v1
+  label: Price strength
+  description: Five-day adjusted-close momentum.
+  hypothesis: Recent price strength may persist over short horizons.
+  direction: positive
+  expected_shape: monotonic
+data:
+  frequency: daily
+  required_fields: [close]
+  lookback_days: 5
+scope: {universe: default, cross_section: market, min_group_size: 10}
+calculation:
+  parameters: {window: {value: 5, robustness_neighbors: [3, 5, 10]}}
+  formula: ret(close, window)
+  winsorize: none
+  standardize: none
+output: {value_field: factor_value}

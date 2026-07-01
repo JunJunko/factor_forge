@@ -1,0 +1,47 @@
+version: 1
+
+factor:
+  name: sw_l1_industry_rank_acceleration
+  label: 申万一级行业内相对强弱排名加速度
+  description: >
+    衡量股票在所属申万一级行业内，相对强弱排名改善速度的变化。
+    因子值越高，表示股票不仅正在提升一级行业内的相对强弱排名，
+    而且排名提升速度仍在加快。
+  hypothesis: >
+    申万一级行业覆盖范围较广，能够容纳龙头、中军和后排股票之间的
+    行情扩散过程。当资金从行业龙头逐渐扩散至其他成分股时，
+    部分股票会经历行业内相对排名持续改善，并且改善速度进一步加快。
+    这种行业内部结构加速可能代表资金正在向该股票迁移，
+    并预示未来1至15个交易日存在短期超额收益。
+  direction: positive
+  expected_shape: top_tail
+
+data:
+  frequency: daily
+  required_fields:
+    - adj_close
+    - industry_l1_code
+  lookback_days: 20
+
+scope:
+  universe: default
+  cross_section: industry
+  group_field: industry_l1_code
+  industry_standard: SW2021
+  industry_level: L1
+  point_in_time_required: true
+  min_group_size: 10
+
+calculation:
+  features:
+    ret_5d: ret(adj_close, 5)
+    industry_strength_rank: cs_rank(ret_5d, by=industry_l1_code)
+    rank_slope_5d: slope(industry_strength_rank, window=5)
+    rank_acceleration_3d: slope(rank_slope_5d, window=3)
+  formula: rank_acceleration_3d
+  missing_policy: skip
+  winsorize: none
+  standardize: none
+
+output:
+  value_field: factor_value

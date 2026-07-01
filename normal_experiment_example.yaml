@@ -1,0 +1,10 @@
+version: 1
+
+experiment:
+  id: exp_normal_stock_factor
+  level: L1
+
+evaluation:
+  horizons: [1, 3, 5, 10]
+
+# No industry_slice section is needed. The original pipeline is used.

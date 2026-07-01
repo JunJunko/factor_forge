@@ -8,28 +8,54 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import numpy as np
+import pandas as pd
 
 from factor_forge.backtest import BacktestEngine
-from factor_forge.config import load_experiment, load_factor, load_project, load_yaml
+from factor_forge.config import factor_source_kind, load_experiment, load_factor, load_factor_combination, load_project, load_yaml
+from factor_forge.combinations import FactorCombinationEngine
+from factor_forge.combinations.diagnostics import CombinationDiagnostics
 from factor_forge.data import DataVersionRepository
 from factor_forge.evaluation import evaluate_factor_quality, evaluate_predictive_power
 from factor_forge.evaluation.robustness import evaluate_robustness
 from factor_forge.factors import FactorEngine
 from factor_forge.scoring import AlphaScorer
+from factor_forge.research.industry import IndustrySlicePipeline
 from .artifacts import RunArtifacts
 
 
+def industry_slice_enabled(experiment) -> bool:
+    config = getattr(experiment, "industry_slice", None)
+    return bool(config is not None and config.enabled)
+
+
 class ExperimentRunner:
-    def run(self, experiment_path: str | Path) -> dict:
+    def run(self, experiment_path: str | Path, factor_path: str | Path | None = None) -> dict:
         experiment_path = Path(experiment_path)
         experiment_raw = load_yaml(experiment_path)
         experiment = load_experiment(experiment_path)
         project_path = Path(experiment.project_config)
-        factor_path = Path(experiment.factor_config)
+        factor_path = Path(factor_path) if factor_path is not None else Path(experiment.factor_config)
         scoring_path = Path(experiment.scoring_config)
         project_raw, factor_raw = load_yaml(project_path), load_yaml(factor_path)
         scoring_raw = load_yaml(scoring_path)
-        project, factor = load_project(project_path), load_factor(factor_path)
+        project = load_project(project_path)
+        source_kind = factor_source_kind(factor_path)
+        combination_spec = load_factor_combination(factor_path) if source_kind == "factor_combination" else None
+        if combination_spec:
+            first_source = combination_spec.factor_combination.components[0].source.path
+            first_path = first_source if first_source.is_absolute() else factor_path.parent / first_source
+            factor = load_factor(first_path)
+            factor = factor.model_copy(deep=True)
+            factor.factor.name = combination_spec.factor_combination.id
+            factor.factor.label = combination_spec.factor_combination.name
+            factor.factor.description = combination_spec.factor_combination.description or combination_spec.factor_combination.name
+            factor.factor.hypothesis = combination_spec.factor_combination.description or "Fixed multi-factor combination"
+            factor.factor.direction = "positive"
+            factor.factor.expected_shape = "monotonic"
+            factor.scope.universe = "default"
+            factor.scope.cross_section = "market"
+        else:
+            factor = load_factor(factor_path)
         repository = DataVersionRepository(project.paths.data_root, project.paths.metadata_db)
         data_version, panel = repository.load_panel(experiment.data_version)
         market_benchmark = (
@@ -58,7 +84,27 @@ class ExperimentRunner:
         artifacts.json("manifest.json", manifest)
         scorer = AlphaScorer(scoring_raw)
         try:
-            factor_values = FactorEngine().compute(panel, factor)
+            combination_result = None
+            if combination_spec:
+                requested = set(experiment.stage_l1.universes) | set(experiment.stage_l2.universes)
+                scope_mask = panel["is_factor_eligible"].fillna(False).astype(bool)
+                if requested:
+                    universe_masks = [panel[f"is_{name}"].fillna(False).astype(bool) for name in requested]
+                    scope_mask &= np.logical_or.reduce(universe_masks)
+                dates = pd.to_datetime(panel["trade_date"])
+                combination_result = FactorCombinationEngine().run(
+                    panel, factor_path, scope_mask=scope_mask,
+                    cache_context={"data_version": data_version, "start_date": dates.min().date(),
+                                   "end_date": dates.max().date(), "base_universe": "+".join(sorted(requested))},
+                )
+                factor_values = combination_result.factor_values
+                artifacts.csv("factor_combination_summary.csv", combination_result.coverage)
+                artifacts.csv("factor_component_coverage.csv", combination_result.component_coverage)
+                artifacts.json("combination_cache_status.json", combination_result.cache_status)
+                artifacts.json("combination_normalization_issues.json", combination_result.normalization_issues)
+                manifest["factor_source_kind"] = "factor_combination"
+            else:
+                factor_values = FactorEngine().compute(panel, factor)
             artifacts.parquet("factor_values.parquet", factor_values)
             l0 = evaluate_factor_quality(panel, factor_values, factor, experiment.stage_l0)
             artifacts.json("l0_quality.json", l0)
@@ -76,6 +122,42 @@ class ExperimentRunner:
                 return self._finish(artifacts, manifest, assessment, l0, l1, [], started, "INVALID_DATA_COVERAGE")
             l1 = evaluate_predictive_power(panel, factor_values, factor, experiment.stage_l1)
             artifacts.json("l1_predictive_power.json", l1)
+            if combination_result:
+                diagnostics = CombinationDiagnostics().run(
+                    panel, factor, experiment, combination_result, main_l1=l1
+                )
+                for filename, frame in diagnostics.frames.items():
+                    artifacts.csv(filename, frame)
+                artifacts.text("factor_combination_report.md", diagnostics.report)
+                manifest["leakage_checks"] = diagnostics.leakage_checks
+                if not all(diagnostics.leakage_checks.values()):
+                    assessment = scorer.score(factor, l0, l1, [])
+                    assessment["classification"] = "INVALID"
+                    assessment["invalid_reason"] = "FACTOR_COMBINATION_LEAKAGE_CHECK_FAILED"
+                    return self._finish(artifacts, manifest, assessment, l0, l1, [], started, "INVALID")
+            if industry_slice_enabled(experiment):
+                industry = IndustrySlicePipeline().run(
+                    panel, factor_values, factor, experiment.stage_l1, experiment.industry_slice,
+                    factor_builder=(lambda mask: FactorCombinationEngine().run(
+                        panel, factor_path, scope_mask=mask,
+                        cache_context={"data_version": data_version, "base_universe": "industry_slice"}
+                    ).factor_values) if combination_result else None,
+                )
+                artifacts.csv("industry_selector_summary.csv", industry.selector_summary)
+                artifacts.csv("industry_selector_by_year.csv", industry.selector_by_year)
+                artifacts.csv("industry_topn_future_returns.csv", industry.selector_summary)
+                artifacts.csv("stock_factor_industry_slice_ic.csv", industry.stock_ic)
+                artifacts.csv("stock_factor_industry_slice_by_year.csv", industry.stock_ic_by_year)
+                artifacts.text("industry_slice_report.md", industry.report)
+                artifacts.text("industry_slice_leakage_report.md", industry.leakage_report)
+                if experiment.industry_slice.diagnostics.save_industry_intermediate:
+                    artifacts.parquet("industry_daily_panel.parquet", industry.industry_panel)
+                    artifacts.parquet("stock_industry_slice_panel.parquet", industry.stock_panel)
+                manifest["industry_slice"] = {
+                    "enabled": True,
+                    "preset": experiment.industry_slice.selector.preset,
+                    "effective_parameters": experiment.industry_slice.selector.overrides.model_dump(),
+                }
             if factor.factor.direction == "unknown":
                 assessment = scorer.score(factor, l0, l1, [])
                 assessment["classification"] = "WATCHLIST"

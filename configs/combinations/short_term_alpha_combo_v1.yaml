@@ -1,0 +1,29 @@
+version: 1
+kind: factor_combination
+factor_combination:
+  id: short_term_alpha_combo_v1
+  name: Short-term multi-factor combination V1
+  description: Fixed-weight combination of price, capital and reversal signals.
+  components:
+    - id: price_strength
+      source: {type: yaml, path: ../factors/price_strength_v1.yaml}
+      direction: positive
+      weight: 0.40
+    - id: capital_improvement
+      source: {type: yaml, path: ../factors/capital_improvement_v1.yaml}
+      direction: positive
+      weight: 0.35
+    - id: short_reversal
+      source: {type: yaml, path: ../factors/short_reversal_v1.yaml}
+      direction: negative
+      weight: 0.25
+  preprocessing:
+    winsorize: {enabled: true, method: percentile, lower: 0.01, upper: 0.99}
+    normalization: {method: cs_zscore, scope: trade_date, min_samples: 2}
+    missing_value: {method: require_minimum_components, minimum_valid_components: 2, missing_score_after_normalization: 0.0}
+  combination: {method: weighted_sum, normalize_weights: true}
+  variants:
+    - {id: price_only, components: [price_strength]}
+    - {id: price_plus_capital, components: [price_strength, capital_improvement]}
+    - {id: full_combo, components: [price_strength, capital_improvement, short_reversal]}
+  output: {direction: positive, column: factor_value}

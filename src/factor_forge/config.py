@@ -84,11 +84,138 @@ class FactorOutput(BaseModel):
 
 class FactorSpec(BaseModel):
     version: int = 1
+    kind: Literal["factor"] = "factor"
     factor: FactorMeta
     data: FactorData
     scope: FactorScope
     calculation: FactorCalculation
     output: FactorOutput = Field(default_factory=FactorOutput)
+
+
+class CombinationSource(BaseModel):
+    type: Literal["yaml"] = "yaml"
+    path: Path
+
+
+class CombinationComponent(BaseModel):
+    id: str = Field(min_length=1)
+    source: CombinationSource
+    direction: Literal["positive", "negative"] = "positive"
+    weight: float = 1.0
+
+
+class WinsorizeConfig(BaseModel):
+    enabled: bool = False
+    method: Literal["percentile"] = "percentile"
+    lower: float = 0.01
+    upper: float = 0.99
+
+    @model_validator(mode="after")
+    def valid_quantiles(self):
+        if not 0 <= self.lower < self.upper <= 1:
+            raise ValueError("winsorize requires 0 <= lower < upper <= 1")
+        return self
+
+
+class NormalizationConfig(BaseModel):
+    method: Literal["cs_zscore", "cs_rank", "cs_percentile"] = "cs_zscore"
+    scope: Literal["trade_date"] = "trade_date"
+    min_samples: int = Field(default=2, ge=2)
+
+
+class MissingValueConfig(BaseModel):
+    method: Literal["intersection", "require_minimum_components", "zero_after_normalization"] = "require_minimum_components"
+    minimum_valid_components: int = Field(default=2, ge=1)
+    missing_score_after_normalization: float = 0.0
+
+
+class CombinationPreprocessing(BaseModel):
+    winsorize: WinsorizeConfig = Field(default_factory=WinsorizeConfig)
+    normalization: NormalizationConfig = Field(default_factory=NormalizationConfig)
+    missing_value: MissingValueConfig = Field(default_factory=MissingValueConfig)
+
+
+class CombinationMethod(BaseModel):
+    method: Literal["weighted_sum", "equal_weight"] = "weighted_sum"
+    normalize_weights: bool = True
+
+
+class FilterCondition(BaseModel):
+    operator: Literal["gt", "gte", "lt", "lte"]
+    value: float
+
+
+class FilterAction(BaseModel):
+    type: Literal["exclude", "score_penalty"]
+    value: float | None = None
+
+    @model_validator(mode="after")
+    def penalty_has_value(self):
+        if self.type == "score_penalty" and self.value is None:
+            raise ValueError("score_penalty requires action.value")
+        return self
+
+
+class CombinationFilter(BaseModel):
+    id: str = Field(min_length=1)
+    source: CombinationSource
+    preprocessing: CombinationPreprocessing = Field(default_factory=CombinationPreprocessing)
+    condition: FilterCondition
+    action: FilterAction
+
+
+class CombinationVariant(BaseModel):
+    id: str = Field(min_length=1)
+    components: list[str] = Field(min_length=1)
+    filters: list[str] = Field(default_factory=list)
+
+
+class CombinationOutput(BaseModel):
+    direction: Literal["positive"] = "positive"
+    column: Literal["factor_value"] = "factor_value"
+
+
+class FactorCombinationBody(BaseModel):
+    id: str = Field(min_length=1)
+    name: str
+    description: str = ""
+    components: list[CombinationComponent] = Field(min_length=2)
+    preprocessing: CombinationPreprocessing = Field(default_factory=CombinationPreprocessing)
+    combination: CombinationMethod = Field(default_factory=CombinationMethod)
+    filters: list[CombinationFilter] = Field(default_factory=list)
+    variants: list[CombinationVariant] = Field(default_factory=list)
+    output: CombinationOutput = Field(default_factory=CombinationOutput)
+
+    @model_validator(mode="after")
+    def validate_references(self):
+        component_ids = [item.id for item in self.components]
+        filter_ids = [item.id for item in self.filters]
+        if len(component_ids) != len(set(component_ids)):
+            raise ValueError("component ids must be unique")
+        if len(filter_ids) != len(set(filter_ids)):
+            raise ValueError("filter ids must be unique")
+        if self.combination.method == "weighted_sum" and not any(item.weight != 0 for item in self.components):
+            raise ValueError("weighted_sum component weights cannot all be zero")
+        minimum = self.preprocessing.missing_value.minimum_valid_components
+        if minimum > len(self.components):
+            raise ValueError("minimum_valid_components cannot exceed component count")
+        variant_ids = [item.id for item in self.variants]
+        if len(variant_ids) != len(set(variant_ids)):
+            raise ValueError("variant ids must be unique")
+        for variant in self.variants:
+            unknown_components = set(variant.components) - set(component_ids)
+            unknown_filters = set(variant.filters) - set(filter_ids)
+            if unknown_components:
+                raise ValueError(f"variant {variant.id} references unknown components: {sorted(unknown_components)}")
+            if unknown_filters:
+                raise ValueError(f"variant {variant.id} references unknown filters: {sorted(unknown_filters)}")
+        return self
+
+
+class FactorCombinationSpec(BaseModel):
+    version: Literal[1] = 1
+    kind: Literal["factor_combination"]
+    factor_combination: FactorCombinationBody
 
 
 class L0Config(BaseModel):
@@ -107,6 +234,39 @@ class L1Config(BaseModel):
     universes: list[Literal["tradeable", "liquid"]] = Field(
         default_factory=lambda: ["tradeable", "liquid"]
     )
+    targets: list[Literal["stock_return", "stock_minus_sw_l1_return"]] = Field(
+        default_factory=lambda: ["stock_return"]
+    )
+
+
+class IndustrySelectorOverrides(BaseModel):
+    short_ema: int = Field(default=3, ge=1)
+    long_ema: int = Field(default=10, ge=2)
+    breadth_change_window: int = Field(default=5, ge=1)
+    ridge_alpha: float = Field(default=1.0, ge=0)
+    minimum_industry_members: int = Field(default=8, ge=2)
+
+
+class IndustrySelectorConfig(BaseModel):
+    preset: Literal["sw_l1_neutralized_rotation_v1"] = "sw_l1_neutralized_rotation_v1"
+    overrides: IndustrySelectorOverrides = Field(default_factory=IndustrySelectorOverrides)
+
+
+class IndustrySliceDiagnostics(BaseModel):
+    evaluate_industry_selector: bool = True
+    save_industry_intermediate: bool = True
+
+
+class IndustrySliceConfig(BaseModel):
+    enabled: bool = False
+    industry_standard: Literal["sw"] = "sw"
+    industry_level: Literal["l1"] = "l1"
+    membership_mode: Literal["point_in_time"] = "point_in_time"
+    selector: IndustrySelectorConfig = Field(default_factory=IndustrySelectorConfig)
+    scopes: list[Literal["all", "top2", "top5", "top10", "bottom5"]] = Field(
+        default_factory=lambda: ["all", "top5", "bottom5"]
+    )
+    diagnostics: IndustrySliceDiagnostics = Field(default_factory=IndustrySliceDiagnostics)
 
 
 class ExecutionConstraints(BaseModel):
@@ -161,7 +321,7 @@ class OutputConfig(BaseModel):
 class ExperimentSpec(BaseModel):
     version: int = 1
     name: str
-    factor_config: Path
+    factor_config: Path = Path("__cli_factor__.yaml")
     project_config: Path = Path("configs/project.yaml")
     scoring_config: Path = Path("configs/contracts/alpha_scoring_v1.yaml")
     data_version: str = "latest"
@@ -171,6 +331,27 @@ class ExperimentSpec(BaseModel):
     stage_l2: L2Config = Field(default_factory=L2Config)
     stage_l3: L3Config = Field(default_factory=L3Config)
     output: OutputConfig = Field(default_factory=OutputConfig)
+    industry_slice: IndustrySliceConfig | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def accept_two_yaml_protocol_shape(cls, value):
+        """Accept the concise public shape while preserving every legacy key."""
+        if not isinstance(value, dict):
+            return value
+        data = dict(value)
+        identity = data.get("experiment")
+        if "name" not in data and isinstance(identity, dict) and identity.get("id"):
+            data["name"] = identity["id"]
+        evaluation = data.get("evaluation")
+        if isinstance(evaluation, dict):
+            stage_l1 = dict(data.get("stage_l1") or {})
+            if "horizons" in evaluation and "forward_horizons" not in stage_l1:
+                stage_l1["forward_horizons"] = evaluation["horizons"]
+            if "targets" in evaluation and "targets" not in stage_l1:
+                stage_l1["targets"] = evaluation["targets"]
+            data["stage_l1"] = stage_l1
+        return data
 
     @model_validator(mode="after")
     def fixed_first_version_space(self) -> "ExperimentSpec":
@@ -196,6 +377,18 @@ def load_project(path: str | Path) -> ProjectConfig:
 
 def load_factor(path: str | Path) -> FactorSpec:
     return FactorSpec.model_validate(load_yaml(path))
+
+
+def factor_source_kind(path: str | Path) -> str:
+    from factor_forge.exceptions import UnsupportedFactorKindError
+    kind = load_yaml(path).get("kind", "factor")
+    if kind not in {"factor", "factor_combination"}:
+        raise UnsupportedFactorKindError(f"Unsupported factor kind: {kind!r}")
+    return kind
+
+
+def load_factor_combination(path: str | Path) -> FactorCombinationSpec:
+    return FactorCombinationSpec.model_validate(load_yaml(path))
 
 
 def load_experiment(path: str | Path) -> ExperimentSpec:

@@ -1,0 +1,34 @@
+version: 1
+
+factor:
+  name: stock_volume_price_preheat_v1
+  label: 个股量价预热因子V1
+  description: 成交额短长均线比相对价格短长均线比的偏离
+  hypothesis: 成交额相对价格更早改善，可能反映资金预热并领先短期价格表现
+  direction: positive
+  expected_shape: monotonic
+
+data:
+  frequency: daily
+  required_fields: [amount, close]
+  lookback_days: 20
+
+scope:
+  universe: liquid
+  cross_section: market
+  min_group_size: 8
+
+calculation:
+  features:
+    amount_ma5: mean(amount, 5)
+    amount_ma20: mean(amount, 20)
+    close_ma5: mean(close, 5)
+    close_ma20: mean(close, 20)
+  formula: (amount_ma5 / amount_ma20) / (close_ma5 / close_ma20) - 1
+  missing_policy: skip
+  winsorize: mad
+  mad_scale: 5.0
+  standardize: none
+
+output:
+  value_field: factor_value

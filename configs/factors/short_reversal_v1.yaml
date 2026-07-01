@@ -1,0 +1,20 @@
+version: 1
+kind: factor
+factor:
+  name: short_reversal_v1
+  label: Short-term return
+  description: One-day adjusted-close return; combination YAML reverses its direction.
+  hypothesis: Very short-term moves may mean-revert.
+  direction: positive
+  expected_shape: monotonic
+data:
+  frequency: daily
+  required_fields: [close]
+  lookback_days: 1
+scope: {universe: default, cross_section: market, min_group_size: 10}
+calculation:
+  parameters: {window: {value: 1, robustness_neighbors: [1, 2, 3]}}
+  formula: ret(close, window)
+  winsorize: none
+  standardize: none
+output: {value_field: factor_value}
