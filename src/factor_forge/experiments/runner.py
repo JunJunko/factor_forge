@@ -58,10 +58,27 @@ class ExperimentRunner:
             factor = load_factor(factor_path)
         repository = DataVersionRepository(project.paths.data_root, project.paths.metadata_db)
         data_version, panel = repository.load_panel(experiment.data_version)
+        if experiment.sample_start_date or experiment.sample_end_date:
+            panel_dates = pd.to_datetime(panel["trade_date"])
+            sample_mask = pd.Series(True, index=panel.index)
+            if experiment.sample_start_date:
+                sample_mask &= panel_dates >= pd.Timestamp(experiment.sample_start_date)
+            if experiment.sample_end_date:
+                sample_mask &= panel_dates <= pd.Timestamp(experiment.sample_end_date)
+            panel = panel.loc[sample_mask].reset_index(drop=True)
+            if panel.empty:
+                raise ValueError("Experiment sample date range contains no panel rows")
         market_benchmark = (
             repository.load_raw_dataset(data_version, "index_daily")
             if "market_index" in experiment.stage_l2.benchmarks else None
         )
+        if market_benchmark is not None and (experiment.sample_start_date or experiment.sample_end_date):
+            benchmark_dates = pd.to_datetime(market_benchmark["trade_date"])
+            if experiment.sample_start_date:
+                market_benchmark = market_benchmark.loc[benchmark_dates >= pd.Timestamp(experiment.sample_start_date)]
+                benchmark_dates = pd.to_datetime(market_benchmark["trade_date"])
+            if experiment.sample_end_date:
+                market_benchmark = market_benchmark.loc[benchmark_dates <= pd.Timestamp(experiment.sample_end_date)]
         _, data_manifest = repository.load_manifest(data_version)
         coverage_blockers = self._coverage_blockers(data_manifest, factor, experiment)
         run_id = self._run_id(

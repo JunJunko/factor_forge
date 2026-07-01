@@ -1,0 +1,10 @@
+{
+  "factor_yaml_hash": "1eae8033824ed91ce9bb1d11bd9a20cace14c9749f7f59aae0867730307ef299",
+  "data_version": "data_v1_20260701T095408Z_c7b9995d",
+  "start_date": "2020-01-02",
+  "end_date": "2026-06-30",
+  "adjustment_mode": "forward_adjusted",
+  "base_universe": "liquid+tradeable",
+  "membership_version": "data_v1_20260701T095408Z_c7b9995d",
+  "factor_engine_version": "factor-engine-v1"
+}

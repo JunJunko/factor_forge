@@ -76,6 +76,11 @@ class CombinationDiagnostics:
         names = list(components)
         for left in names:
             for right in names:
+                if left == right:
+                    valid_days = wide.groupby("trade_date")[left].apply(lambda x: x.notna().sum() >= 3)
+                    rows.append({"component_a": left, "component_b": right,
+                                 "mean_daily_spearman": 1.0, "days": int(valid_days.sum())})
+                    continue
                 daily = wide.groupby("trade_date")[[left, right]].apply(
                     lambda x: x[left].corr(x[right], method="spearman") if len(x.dropna()) >= 3 else np.nan)
                 rows.append({"component_a": left, "component_b": right, "mean_daily_spearman": daily.mean(), "days": int(daily.notna().sum())})
@@ -129,15 +134,20 @@ class CombinationDiagnostics:
     @staticmethod
     def _backtest(panel, values, experiment):
         engine, rows = BacktestEngine(), []
-        for universe in experiment.stage_l2.universes:
-            for top_n in experiment.stage_l2.top_n:
-                for holding in experiment.stage_l2.holding_periods:
-                    for cost in experiment.stage_l2.cost_scenarios_bps:
-                        result = engine.run(panel, values, universe=universe, top_n=top_n, holding_days=holding,
-                            initial_cash=experiment.stage_l2.initial_cash, lot_size=experiment.stage_l2.lot_size,
-                            constraints=experiment.stage_l2.execution_constraints, cost_model=experiment.stage_l2.cost_model,
-                            cost_scenario_bps=cost)
-                        rows.append((cost, result))
+        # Incremental/LOFO diagnostics use one fixed protocol while retaining the
+        # complete declared TopN curve. The main factor still runs the full L2 grid.
+        universe = "liquid" if "liquid" in experiment.stage_l2.universes else experiment.stage_l2.universes[0]
+        holding = experiment.stage_l2.holding_periods[0]
+        costs = sorted({0, max(experiment.stage_l2.cost_scenarios_bps)})
+        # One representative TopN keeps incremental/LOFO attribution tractable;
+        # the main run below still produces the complete configured TopN curve.
+        for top_n in experiment.stage_l2.top_n[:1]:
+            for cost in costs:
+                result = engine.run(panel, values, universe=universe, top_n=top_n, holding_days=holding,
+                    initial_cash=experiment.stage_l2.initial_cash, lot_size=experiment.stage_l2.lot_size,
+                    constraints=experiment.stage_l2.execution_constraints, cost_model=experiment.stage_l2.cost_model,
+                    cost_scenario_bps=cost)
+                rows.append((cost, result))
         if not rows:
             return {"yearly_positive_ratio": np.nan, "topn_return": np.nan, "turnover": np.nan,
                     "cost_drag": np.nan, "net_return": np.nan, "max_drawdown": np.nan}

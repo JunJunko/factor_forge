@@ -325,6 +325,8 @@ class ExperimentSpec(BaseModel):
     project_config: Path = Path("configs/project.yaml")
     scoring_config: Path = Path("configs/contracts/alpha_scoring_v1.yaml")
     data_version: str = "latest"
+    sample_start_date: str | None = None
+    sample_end_date: str | None = None
     research_mode: Literal["exploratory"] = "exploratory"
     stage_l0: L0Config = Field(default_factory=L0Config)
     stage_l1: L1Config = Field(default_factory=L1Config)

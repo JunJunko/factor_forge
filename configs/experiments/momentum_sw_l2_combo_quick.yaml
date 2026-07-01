@@ -1,0 +1,57 @@
+version: 1
+name: momentum_sw_l2_combo_quick
+project_config: configs/project_sw_l2.yaml
+scoring_config: configs/contracts/alpha_scoring_v1.yaml
+data_version: latest
+sample_start_date: "2024-01-01"
+sample_end_date: "2026-06-30"
+research_mode: exploratory
+
+stage_l0:
+  min_coverage: 0.70
+  max_missing_rate: 0.30
+  min_daily_cross_section: 100
+  min_unique_ratio: 0.01
+  min_valid_groups_per_day: 5
+  future_data_violation: 0
+
+stage_l1:
+  forward_horizons: [1, 5, 10]
+  quantile_groups: 10
+  min_cross_section: 100
+  universes: [liquid]
+
+stage_l2:
+  universes: [liquid]
+  rebalance_frequency: 1D
+  holding_periods: [5]
+  top_n: [2, 5, 10, 20]
+  weighting: equal
+  signal_time: close_t
+  entry_price: open_t1
+  overlapping_portfolios: true
+  initial_cash: 1000000
+  lot_size: 100
+  no_fill_policy: keep_cash
+  execution_constraints:
+    exclude_suspended: true
+    cannot_buy_limit_up: true
+    cannot_sell_limit_down: true
+    exclude_st: true
+    exclude_delisting_period: true
+    min_listing_days: 60
+  cost_model:
+    commission_bps_per_side: 3
+    slippage_bps_per_side: 5
+    stamp_duty_bps_sell: 5
+  cost_scenarios_bps: [0, 20]
+  benchmarks: [universe_equal_weight, market_index]
+
+stage_l3:
+  enabled: false
+
+output:
+  store_trade_details: true
+  store_daily_positions: true
+  store_daily_factor_values: true
+  store_experiment_manifest: true

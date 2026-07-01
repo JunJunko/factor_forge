@@ -20,6 +20,8 @@ configs/factors/price_strength_v1.yaml
 configs/factors/capital_improvement_v1.yaml
 configs/factors/short_reversal_v1.yaml
 configs/combinations/short_term_alpha_combo_v1.yaml
+configs/combinations/momentum_sw_l2_acceleration_v1.yaml
 configs/experiments/short_term_alpha_combo_l1.yaml
 configs/experiments/short_term_alpha_combo_industry_slice.yaml
+configs/experiments/momentum_sw_l2_combo_quick.yaml
 tests/test_factor_combinations.py

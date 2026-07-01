@@ -36,7 +36,6 @@ def build_variants(merged: pd.DataFrame, cross_section: str) -> dict[str, pd.Ser
     if merged["log_total_mv"].notna().any():
         if cross_section == "industry":
             variants["size_neutralized"] = neutralize(merged, include_industry=False)
-        elif merged["industry_l1_code"].notna().any():
+        elif "industry_l1_code" in merged and merged["industry_l1_code"].notna().any():
             variants["industry_size_neutralized"] = neutralize(merged, include_industry=True)
     return variants
-
