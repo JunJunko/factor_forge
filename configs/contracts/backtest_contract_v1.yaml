@@ -1,0 +1,23 @@
+version: "1.0.0"
+signal_time: T_CLOSE
+entry: T_PLUS_1_OPEN
+exit: OPEN_AFTER_HOLDING_PERIOD
+rebalance_frequency: 1D
+portfolio:
+  model: independent_cash_sleeves
+  sleeve_count: holding_period
+  allocation_per_sleeve: total_capital_div_holding_period
+  weighting: equal
+  same_stock_across_sleeves: allowed
+  blocked_exit: hold_until_sellable_and_skip_next_batch_for_that_sleeve
+execution:
+  buy_limit_up: reject
+  sell_limit_down: defer
+  suspended: no_trade
+  unfilled_buy: keep_cash
+  substitute_next_rank: false
+  lot_size: 100
+valuation:
+  execution_price: raw_open
+  holding_return: adjusted_open_ratio
+  suspended_position: last_available_adjusted_price

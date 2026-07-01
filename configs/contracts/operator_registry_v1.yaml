@@ -1,0 +1,25 @@
+version: "1.0.0"
+series_index: [trade_date, ts_code]
+operators:
+  ret: {formula: x_t_div_x_t_minus_n_minus_1, min_periods: full}
+  lag: {formula: x_t_minus_n, min_periods: full}
+  delta: {formula: x_t_minus_x_t_minus_n, min_periods: full}
+  mean: {method: rolling_mean, min_periods: full}
+  std: {method: rolling_population_std, ddof: 0, min_periods: full}
+  slope: {method: ols_on_0_to_window_minus_1, min_periods: full}
+  max: {method: rolling_max, min_periods: full}
+  min: {method: rolling_min, min_periods: full}
+  cs_rank: {range: zero_to_one, ties: average, nulls: excluded}
+  cs_percentile: {alias: cs_rank}
+  cs_zscore: {ddof: 0, nulls: excluded}
+  group_mean: {method: daily_group_transform_mean}
+  abs: {}
+  log: {nonpositive: null}
+  clip: {}
+  where: {}
+syntax:
+  arithmetic: [add, subtract, multiply, divide, power]
+  comparisons: [gt, gte, lt, lte, eq, ne]
+  arbitrary_python: forbidden
+  attribute_access: forbidden
+  future_operators: forbidden

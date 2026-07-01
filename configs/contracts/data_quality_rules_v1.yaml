@@ -1,0 +1,10 @@
+version: "1.0.0"
+rules:
+  - {name: unique_primary_key, severity: BLOCKING}
+  - {name: nonempty_dataset, severity: BLOCKING}
+  - {name: valid_ohlc, severity: BLOCKING}
+  - {name: positive_adj_factor, severity: BLOCKING}
+  - {name: nonnegative_volume_and_amount, severity: BLOCKING}
+  - {name: point_in_time_st_status, severity: BLOCKING}
+  - {name: industry_history_coverage, severity: FEATURE_BLOCKING, feature: industry_factor}
+  - {name: daily_basic_coverage, severity: FEATURE_BLOCKING, feature: size_neutralization_and_liquid_universe}

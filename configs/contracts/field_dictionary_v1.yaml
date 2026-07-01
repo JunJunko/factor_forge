@@ -1,0 +1,37 @@
+version: "1.0.0"
+fields:
+  trade_date: {type: date, nullable: false, available_time: T_CLOSE}
+  ts_code: {type: string, nullable: false}
+  raw_open: {type: float64, nullable: true, unit: CNY, purpose: execution}
+  raw_high: {type: float64, nullable: true, unit: CNY}
+  raw_low: {type: float64, nullable: true, unit: CNY}
+  raw_close: {type: float64, nullable: true, unit: CNY}
+  pre_close: {type: float64, nullable: true, unit: CNY}
+  adj_factor: {type: float64, nullable: true}
+  adj_open: {type: float64, nullable: true, formula: raw_open_times_adj_factor}
+  adj_high: {type: float64, nullable: true, formula: raw_high_times_adj_factor}
+  adj_low: {type: float64, nullable: true, formula: raw_low_times_adj_factor}
+  adj_close: {type: float64, nullable: true, formula: raw_close_times_adj_factor}
+  volume_shares: {type: float64, nullable: true, unit: shares, source_conversion: vol_times_100}
+  amount_cny: {type: float64, nullable: true, unit: CNY, source_conversion: amount_times_1000}
+  pct_change: {type: float64, nullable: true, unit: percent}
+  total_mv_cny: {type: float64, nullable: true, unit: CNY, source_conversion: total_mv_times_10000}
+  circ_mv_cny: {type: float64, nullable: true, unit: CNY, source_conversion: circ_mv_times_10000}
+  log_total_mv: {type: float64, nullable: true}
+  log_circ_mv: {type: float64, nullable: true}
+  turnover_rate: {type: float64, nullable: true, unit: percent}
+  industry_l1_code: {type: string, nullable: true, point_in_time: true}
+  industry_l1_name: {type: string, nullable: true, point_in_time: true}
+  industry_l2_code: {type: string, nullable: true, point_in_time: true}
+  industry_l2_name: {type: string, nullable: true, point_in_time: true}
+  limit_up_price: {type: float64, nullable: true, unit: CNY}
+  limit_down_price: {type: float64, nullable: true, unit: CNY}
+  is_suspended: {type: bool, nullable: false}
+  is_limit_up_open: {type: bool, nullable: false}
+  is_limit_down_open: {type: bool, nullable: false}
+  is_st: {type: bool, nullable: false, point_in_time: true}
+  is_delisting_period: {type: bool, nullable: false, point_in_time: true}
+  listing_trade_days: {type: int64, nullable: false}
+  is_factor_eligible: {type: bool, nullable: false}
+  is_tradeable: {type: bool, nullable: false}
+  is_liquid: {type: bool, nullable: false}

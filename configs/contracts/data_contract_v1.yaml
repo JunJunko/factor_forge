@@ -1,0 +1,26 @@
+version: "1.0.0"
+frequency: daily
+market: CN_A_SHARE
+start_date: "20150101"
+runtime_fetch_allowed: false
+primary_key: [trade_date, ts_code]
+signal_time: T_CLOSE
+earliest_execution: T_PLUS_1_OPEN
+prices:
+  execution: raw
+  factor_and_return: raw_price_times_adj_factor
+units:
+  volume_shares: shares
+  amount_cny: CNY
+  return: decimal
+point_in_time:
+  st_status: required
+  industry_membership: required
+missing_data:
+  market_data: no_fill
+  factor_value: exclude_from_cross_section
+publication:
+  immutable_versions: true
+  file_hashes_required: true
+  quality_gate_required: true
+

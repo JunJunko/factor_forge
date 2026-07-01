@@ -1,0 +1,19 @@
+project_name: factor_forge
+timezone: Asia/Shanghai
+paths:
+  data_root: data
+  metadata_db: data/metadata.sqlite3
+  artifacts_root: artifacts/runs
+data:
+  start_date: "20150101"
+  exchanges: [SSE, SZSE]
+  boards: [main, chinext, star]
+  industry_standard: SW2021
+  industry_level: L2
+  industry_min_group_size: 8
+  listing_age_days: 60
+  liquidity:
+    window: 20
+    min_avg_amount_cny: 30000000
+    min_traded_days: 18
+    max_participation_rate: 0.02

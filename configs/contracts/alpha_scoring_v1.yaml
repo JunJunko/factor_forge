@@ -1,0 +1,18 @@
+version: 1
+profile: short_term_topn_v1
+primary_result: {universe: liquid, top_n: 2, cost_bps: 20, signal_time: close_t, entry_price: open_t1}
+weights:
+  oos_effectiveness: 25
+  tradable_performance: 25
+  stability: 20
+  topn_structure: 10
+  statistical_evidence: 10
+  independence_explanation: 10
+classification:
+  rejected: {max_score: 49}
+  watchlist: {min_score: 50, max_score: 64}
+  candidate: {min_score: 65, max_score: 79}
+  approved:
+    min_score: 80
+    minimum_dimension_scores: {oos_effectiveness: 17, tradable_performance: 17, stability: 12}
+production_is_automatic: false

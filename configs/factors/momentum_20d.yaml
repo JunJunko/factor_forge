@@ -1,0 +1,33 @@
+version: 1
+factor:
+  name: momentum_20d
+  label: 20日动量（跳过最近1日）
+  description: 使用复权连续收盘价计算20日动量，并跳过最近一个交易日
+  hypothesis: 中期价格趋势在短期内具有延续性，跳过最近一日可减少微观反转干扰
+  direction: positive
+  expected_shape: monotonic
+data:
+  frequency: daily
+  required_fields: [close]
+  lookback_days: 21
+scope:
+  universe: default
+  cross_section: market
+  min_group_size: 10
+calculation:
+  parameters:
+    window:
+      value: 20
+      robustness_neighbors: [15, 20, 30]
+    skip:
+      value: 1
+      robustness_neighbors: [0, 1, 2]
+  features:
+    lagged_close: lag(close, skip)
+  formula: ret(lagged_close, window)
+  missing_policy: skip
+  winsorize: mad
+  mad_scale: 5.0
+  standardize: zscore
+output:
+  value_field: factor_value

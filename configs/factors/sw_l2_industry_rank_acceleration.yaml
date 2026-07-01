@@ -1,0 +1,42 @@
+version: 1
+
+factor:
+  name: sw_l2_industry_rank_acceleration
+  label: 申万二级行业内相对强弱排名加速度
+  description: >
+    衡量股票在申万二级行业内，相对强弱排名改善速度的变化。
+  hypothesis: >
+    行业行情扩散过程中，排名改善速度继续加快的股票，
+    未来可能获得短期超额收益。
+  direction: positive
+  expected_shape: top_tail
+
+data:
+  frequency: daily
+  required_fields:
+    - adj_close
+    - industry_l2_code
+  lookback_days: 20
+
+scope:
+  universe: default
+  cross_section: industry
+  group_field: industry_l2_code
+  industry_standard: SW2021
+  industry_level: L2
+  point_in_time_required: true
+  min_group_size: 8
+
+calculation:
+  features:
+    ret_5d: ret(adj_close, 5)
+    industry_strength_rank: cs_rank(ret_5d, by=industry_l2_code)
+    rank_slope_5d: slope(industry_strength_rank, window=5)
+    rank_acceleration_3d: slope(rank_slope_5d, window=3)
+  formula: rank_acceleration_3d
+  missing_policy: skip
+  winsorize: none
+  standardize: none
+
+output:
+  value_field: factor_value

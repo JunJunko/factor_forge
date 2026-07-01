@@ -1,0 +1,16 @@
+version: "1.0.0"
+run_directory: artifacts/runs/<run_id>
+immutable: true
+required:
+  - manifest.json
+  - inputs/factor.yaml
+  - inputs/experiment.yaml
+  - inputs/project.yaml
+  - inputs/scoring.yaml
+  - factor_values.parquet
+  - l0_quality.json
+conditional:
+  l1: l1_predictive_power.json
+  l2: [l2_summary.json, l2/*/daily.parquet, l2/*/trades.parquet, l2/*/positions.parquet]
+  l3: l3_robustness.json
+  completed: [alpha_assessment.json, report.md]
