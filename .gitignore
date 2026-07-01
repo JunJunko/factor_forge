@@ -13,3 +13,5 @@ data/versions/
 data/staging/
 artifacts/runs/
 *.sqlite3
+*.log
+和GPT对话.txt
