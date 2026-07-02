@@ -1,0 +1,26 @@
+project_config: configs/project.yaml
+data_version: latest
+sample_start_date: "2021-01-01"
+sample_end_date: null
+universe: liquid
+forward_horizons: [1, 3, 5, 10, 20]
+min_cross_section: 8
+min_ic_days: 40
+include_pairs: true
+output_root: artifacts/breakout_runs
+workers: 1
+
+breakout:
+  box_lookback: 40
+  atr_window: 20
+  volatility_short_window: 10
+  volatility_long_window: 40
+  process_window: 10
+  acceleration_window: 3
+  volume_window: 20
+  max_active_days: 20
+  max_box_width_atr: 8.0
+  max_abs_slope_atr: 0.10
+  max_volatility_ratio: 1.0
+  breakout_buffer_atr: 0.0
+  failure_buffer_atr: 0.0

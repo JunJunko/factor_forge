@@ -1,0 +1,14 @@
+{
+  "run_id": "breakout_20260702T075822Z_def5a0da",
+  "status": "COMPLETED",
+  "created_at": "2026-07-02T07:58:26.498552+00:00",
+  "data_version": "data_v1_20260701T095408Z_c7b9995d",
+  "event_count": 69292,
+  "box_count": 329203,
+  "score_count": 63,
+  "condition_count": 17,
+  "test_count": 5040,
+  "promising_count": 721,
+  "inference": "daily event cross-sectional Spearman IC; Newey-West HAC; BH-FDR",
+  "output_path": "D:\\pyworkspace\\factor_forge\\artifacts\\breakout_runs\\breakout_20260702T075822Z_def5a0da"
+}
