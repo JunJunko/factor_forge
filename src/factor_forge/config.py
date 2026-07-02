@@ -4,7 +4,17 @@ from pathlib import Path
 from typing import Literal
 
 import yaml
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel as PydanticBaseModel, ConfigDict, Field, model_validator
+
+
+class BaseModel(PydanticBaseModel):
+    """Project-wide strict configuration model.
+
+    A misspelled YAML key must fail validation instead of silently selecting a
+    default value.
+    """
+
+    model_config = ConfigDict(extra="forbid")
 
 
 class PathsConfig(BaseModel):
@@ -324,6 +334,7 @@ class ExperimentSpec(BaseModel):
     factor_config: Path = Path("__cli_factor__.yaml")
     project_config: Path = Path("configs/project.yaml")
     scoring_config: Path = Path("configs/contracts/alpha_scoring_v1.yaml")
+    backtest_contract: Path = Path("configs/contracts/backtest_contract_v1.yaml")
     data_version: str = "latest"
     sample_start_date: str | None = None
     sample_end_date: str | None = None
@@ -342,10 +353,10 @@ class ExperimentSpec(BaseModel):
         if not isinstance(value, dict):
             return value
         data = dict(value)
-        identity = data.get("experiment")
+        identity = data.pop("experiment", None)
         if "name" not in data and isinstance(identity, dict) and identity.get("id"):
             data["name"] = identity["id"]
-        evaluation = data.get("evaluation")
+        evaluation = data.pop("evaluation", None)
         if isinstance(evaluation, dict):
             stage_l1 = dict(data.get("stage_l1") or {})
             if "horizons" in evaluation and "forward_horizons" not in stage_l1:

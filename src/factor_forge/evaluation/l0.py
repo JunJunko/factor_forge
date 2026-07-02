@@ -7,7 +7,8 @@ from factor_forge.config import FactorSpec, L0Config
 
 
 def evaluate_factor_quality(
-    panel: pd.DataFrame, factor_values: pd.DataFrame, spec: FactorSpec, gate: L0Config
+    panel: pd.DataFrame, factor_values: pd.DataFrame, spec: FactorSpec, gate: L0Config,
+    temporal_audit: dict | None = None,
 ) -> dict:
     merged = panel[["trade_date", "ts_code", "is_factor_eligible"]].merge(
         factor_values[["trade_date", "ts_code", "factor_value"]],
@@ -27,12 +28,14 @@ def evaluate_factor_quality(
         groups = factor_values.loc[factor_values["factor_valid"] & factor_values["group_code"].notna()]
         counts = groups.groupby(["trade_date", "group_code"])["ts_code"].count()
         valid_groups = counts[counts >= spec.scope.min_group_size].groupby(level=0).size()
+    temporal_audit = temporal_audit or {"checked_cutoffs": 0, "future_data_violations": 1}
+    future_violations = int(temporal_audit.get("future_data_violations", 1))
     checks = {
         "coverage": coverage >= gate.min_coverage,
         "missing_rate": (1.0 - coverage) <= gate.max_missing_rate,
         "daily_cross_section": (float(daily_count.median()) if len(daily_count) else 0) >= gate.min_daily_cross_section,
         "unique_ratio": (float(unique_ratio) if np.isfinite(unique_ratio) else 0) >= gate.min_unique_ratio,
-        "future_data_audit": True,  # V1 DSL exposes only current/past operators.
+        "future_data_audit": temporal_audit.get("checked_cutoffs", 0) > 0 and future_violations == 0,
     }
     if valid_groups is not None:
         checks["valid_industry_groups"] = (
@@ -45,7 +48,7 @@ def evaluate_factor_quality(
         "mean_unique_ratio": float(unique_ratio) if np.isfinite(unique_ratio) else 0.0,
         "factor_mean": float(valid["factor_value"].mean()) if len(valid) else None,
         "factor_std": float(valid["factor_value"].std(ddof=0)) if len(valid) else None,
-        "future_data_violations": 0,
+        "future_data_violations": future_violations,
+        "future_data_checked_cutoffs": int(temporal_audit.get("checked_cutoffs", 0)),
     }
     return {"passed": all(checks.values()), "checks": checks, "metrics": metrics}
-

@@ -1,0 +1,233 @@
+# Factor Forge V1 实验模板（供大模型填写）
+#
+# 填写规则：
+# 1. 只允许使用本模板已有的结构；禁止创造新字段，未知字段会导致校验失败。
+# 2. 因子公式属于 factor_config 指向的因子 YAML，不要在实验 YAML 中编写公式。
+# 3. V1 只允许 holding_periods/forward_horizons 使用 1、3、5、10、15，top_n 使用 2、5、10、20。
+# 4. 正式实验应固定 data_version；latest 只适合探索性运行。
+# 5. 输出纯 YAML，不要使用 Markdown 代码围栏，也不要删除必要字段。
+
+# 实验配置格式版本；V1 固定填写 1。
+version: 1
+
+# 实验唯一名称；建议包含因子名、研究范围和版本号。
+name: replace_me_experiment_v1
+
+# 项目配置路径；决定数据仓库、元数据数据库、产物目录和行业层级。
+project_config: configs/project.yaml
+
+# 待评估的原子因子或因子组合 YAML 路径。
+factor_config: configs/factors/_factor_template.yaml
+
+# Alpha 评分合同路径；通常保持项目标准合同不变。
+scoring_config: configs/contracts/alpha_scoring_v1.yaml
+
+# 回测语义合同路径；运行时会校验实验设置与该合同是否一致。
+backtest_contract: configs/contracts/backtest_contract_v1.yaml
+
+# 数据版本 ID；探索时可写 latest，正式审计必须替换为明确的 data_v1_* 版本。
+data_version: latest
+
+# 正式样本开始日期，格式 YYYYMMDD；null 表示从数据版本首日开始。计算时会自动保留此前历史用于因子预热。
+sample_start_date: null
+
+# 正式样本结束日期，格式 YYYYMMDD；null 表示使用数据版本末日。
+sample_end_date: null
+
+# 研究模式；V1 只支持 exploratory。
+research_mode: exploratory
+
+# L0：数据与因子值质量门槛；未通过时不会继续预测评估和回测。
+stage_l0:
+  # 合格股票行中因子有限值的最低覆盖率，范围建议为 0～1。
+  min_coverage: 0.70
+
+  # 允许的最高缺失率；通常应与 1-min_coverage 一致或更严格。
+  max_missing_rate: 0.30
+
+  # 每日有效因子股票数量中位数的最低要求。
+  min_daily_cross_section: 100
+
+  # 每日因子不同取值数占有效样本数的最低平均比例，用于识别近似常数因子。
+  min_unique_ratio: 0.01
+
+  # 行业截面因子每天至少需要多少个满足样本数要求的行业；市场截面因子不会使用该门槛。
+  min_valid_groups_per_day: 5
+
+  # 允许的未来数据违规数量；审计目标固定应为 0。
+  future_data_violation: 0
+
+# L1：因子预测能力、IC、分组收益和样本外评估设置。
+stage_l1:
+  # 预测收益期限，单位为交易日；V1 只能从 1、3、5、10、15 中选择。
+  forward_horizons: [1, 3, 5, 10, 15]
+
+  # 截面分位数组数；常用 5 或 10，且不能超过典型每日样本量。
+  quantile_groups: 10
+
+  # 进入每日 IC/分组统计所需的最低截面样本数。
+  min_cross_section: 100
+
+  # 分别在哪些股票池评价预测能力；可选 tradeable、liquid。
+  universes: [tradeable, liquid]
+
+  # 预测目标；stock_return=个股收益，stock_minus_sw_l1_return=个股相对申万一级行业收益。
+  targets: [stock_return]
+
+# L2：可交易组合回测网格及执行假设。
+stage_l2:
+  # 运行回测的股票池；正式主回测通常使用 liquid。
+  universes: [liquid]
+
+  # 调仓频率；V1 固定为每日 1D。
+  rebalance_frequency: 1D
+
+  # 持有交易日数；V1 只能从 1、3、5、10、15 中选择，每个值会形成一组独立回测。
+  holding_periods: [1, 3, 5, 10, 15]
+
+  # 每次信号选择的股票数量；V1 只能从 2、5、10、20 中选择。
+  top_n: [2, 5, 10, 20]
+
+  # 入选股票的权重方式；V1 固定为等权 equal。
+  weighting: equal
+
+  # 信号形成时间；V1 固定为 T 日收盘 close_t。
+  signal_time: close_t
+
+  # 入场价格时点；V1 固定为 T+1 日开盘 open_t1。
+  entry_price: open_t1
+
+  # 是否使用重叠组合资金袖套；V1 固定为 true。
+  overlapping_portfolios: true
+
+  # 每组回测的初始总资金，单位为人民币元。
+  initial_cash: 1000000
+
+  # 最小交易股数单位；A 股及当前回测合同固定为 100 股。
+  lot_size: 100
+
+  # 买入失败后的处理；V1 固定为 keep_cash，不使用下一名股票替补。
+  no_fill_policy: keep_cash
+
+  # 开盘成交时执行的硬约束。
+  execution_constraints:
+    # true=停牌股票不可买卖；正式回测应保持 true。
+    exclude_suspended: true
+
+    # true=开盘涨停时拒绝买入且不替补；回测合同要求 true。
+    cannot_buy_limit_up: true
+
+    # true=开盘跌停时无法卖出，持仓顺延到下一可卖日；回测合同要求 true。
+    cannot_sell_limit_down: true
+
+    # true=排除 ST 股票。
+    exclude_st: true
+
+    # true=排除退市整理期股票。
+    exclude_delisting_period: true
+
+    # 股票上市后至少经过多少个交易日才允许买入。
+    min_listing_days: 60
+
+  # 当 cost_scenario_bps 未覆盖某次调用时使用的分项成本模型。
+  cost_model:
+    # 单边佣金，单位为基点；1 bps=0.01%。
+    commission_bps_per_side: 3
+
+    # 单边滑点，单位为基点。
+    slippage_bps_per_side: 5
+
+    # 仅卖出侧收取的印花税，单位为基点。
+    stamp_duty_bps_sell: 5
+
+  # 总往返成本情景，单位为基点；每个值形成一组回测，运行时均分到买卖两侧。
+  cost_scenarios_bps: [0, 10, 20]
+
+  # 比较基准；universe_equal_weight=对应股票池等权，market_index=数据版本中的市场指数。
+  benchmarks: [universe_equal_weight, market_index]
+
+# L3：通过前置门槛后执行的稳健性分析。
+stage_l3:
+  # 是否允许运行 L3；只有成本 20 bps 的回测存在正超额收益时才会实际触发。
+  enabled: true
+
+  # 要求记录的稳健性检验名称；建议保留完整标准集合。
+  robustness_tests:
+    # 分年度表现稳定性。
+    - year_by_year
+    # 滚动窗口表现稳定性。
+    - rolling_window
+    # 走步式样本外检验。
+    - walk_forward
+    # 不同 TopN 的收益曲线。
+    - topn_curve
+    # 不同持有期的收益衰减。
+    - holding_decay
+    # 不同交易成本下的敏感性。
+    - cost_sensitivity
+    # 因子 YAML 所声明参数邻域的稳健性。
+    - parameter_neighborhood
+    # 收益贡献是否集中于少量股票或交易。
+    - contribution_concentration
+    # 移除最佳交易后的表现。
+    - removal_of_best_trades
+    # 行业暴露诊断。
+    - industry_exposure
+    # 市值暴露诊断。
+    - size_exposure
+
+# 可选的行业切片研究；不需要时可保留本段并设置 enabled: false，或删除整个 industry_slice 字段。
+industry_slice:
+  # 是否启用申万一级行业轮动切片研究。
+  enabled: false
+
+  # 行业标准标识；当前行业切片管线固定为 sw。
+  industry_standard: sw
+
+  # 行业层级；当前行业切片管线固定为 l1。
+  industry_level: l1
+
+  # 行业归属模式；固定使用 point_in_time，禁止用当前行业反填历史。
+  membership_mode: point_in_time
+
+  # 行业选择器配置。
+  selector:
+    # 内置行业选择器预设；当前只支持该值。
+    preset: sw_l1_neutralized_rotation_v1
+
+    # 对内置选择器默认参数的显式覆盖。
+    overrides:
+      # 行业信号短周期 EMA 窗口，必须大于等于 1。
+      short_ema: 3
+      # 行业信号长周期 EMA 窗口，必须大于等于 2，通常应大于 short_ema。
+      long_ema: 10
+      # 行业宽度变化的观察窗口，必须大于等于 1。
+      breadth_change_window: 5
+      # 中性化岭回归强度，必须大于等于 0。
+      ridge_alpha: 1.0
+      # 行业参与计算所需的最低成分股数量，必须大于等于 2。
+      minimum_industry_members: 8
+
+  # 对哪些行业选择范围评估股票因子；可选 all、top2、top5、top10、bottom5。
+  scopes: [all, top5, bottom5]
+
+  # 行业切片诊断产物开关。
+  diagnostics:
+    # 是否评价行业选择器本身的预测能力。
+    evaluate_industry_selector: true
+    # 是否保存行业和股票切片的中间面板，便于审计但会增加磁盘占用。
+    save_industry_intermediate: true
+
+# 实验产物保存选项。
+output:
+  # 是否保存逐笔成交明细 trades.parquet。
+  store_trade_details: true
+
+  # 是否保存逐日持仓明细 positions.parquet。
+  store_daily_positions: true
+
+  # 是否保存逐日因子值 factor_values.parquet。
+  store_daily_factor_values: true
+
+  # 是否保存实验 manifest；审计运行应保持 true。
+  store_experiment_manifest: true

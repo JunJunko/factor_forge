@@ -36,8 +36,11 @@ class ExperimentRunner:
         project_path = Path(experiment.project_config)
         factor_path = Path(factor_path) if factor_path is not None else Path(experiment.factor_config)
         scoring_path = Path(experiment.scoring_config)
+        backtest_contract_path = Path(experiment.backtest_contract)
         project_raw, factor_raw = load_yaml(project_path), load_yaml(factor_path)
         scoring_raw = load_yaml(scoring_path)
+        backtest_contract_raw = load_yaml(backtest_contract_path)
+        self._validate_backtest_contract(backtest_contract_raw, experiment)
         project = load_project(project_path)
         source_kind = factor_source_kind(factor_path)
         combination_spec = load_factor_combination(factor_path) if source_kind == "factor_combination" else None
@@ -58,16 +61,14 @@ class ExperimentRunner:
             factor = load_factor(factor_path)
         repository = DataVersionRepository(project.paths.data_root, project.paths.metadata_db)
         data_version, panel = repository.load_panel(experiment.data_version)
-        if experiment.sample_start_date or experiment.sample_end_date:
-            panel_dates = pd.to_datetime(panel["trade_date"])
-            sample_mask = pd.Series(True, index=panel.index)
-            if experiment.sample_start_date:
-                sample_mask &= panel_dates >= pd.Timestamp(experiment.sample_start_date)
-            if experiment.sample_end_date:
-                sample_mask &= panel_dates <= pd.Timestamp(experiment.sample_end_date)
-            panel = panel.loc[sample_mask].reset_index(drop=True)
-            if panel.empty:
-                raise ValueError("Experiment sample date range contains no panel rows")
+        panel_dates = pd.to_datetime(panel["trade_date"])
+        sample_mask = pd.Series(True, index=panel.index)
+        if experiment.sample_start_date:
+            sample_mask &= panel_dates >= pd.Timestamp(experiment.sample_start_date)
+        if experiment.sample_end_date:
+            sample_mask &= panel_dates <= pd.Timestamp(experiment.sample_end_date)
+        if not sample_mask.any():
+            raise ValueError("Experiment sample date range contains no panel rows")
         market_benchmark = (
             repository.load_raw_dataset(data_version, "index_daily")
             if "market_index" in experiment.stage_l2.benchmarks else None
@@ -82,7 +83,8 @@ class ExperimentRunner:
         _, data_manifest = repository.load_manifest(data_version)
         coverage_blockers = self._coverage_blockers(data_manifest, factor, experiment)
         run_id = self._run_id(
-            factor.factor.name, data_version, factor_raw, experiment_raw, project_raw, scoring_raw
+            factor.factor.name, data_version, factor_raw, experiment_raw, project_raw, scoring_raw,
+            backtest_contract_raw,
         )
         artifacts = RunArtifacts(project.paths.artifacts_root, run_id)
         started = datetime.now(timezone.utc)
@@ -98,6 +100,7 @@ class ExperimentRunner:
         artifacts.yaml("inputs/experiment.yaml", experiment_raw)
         artifacts.yaml("inputs/project.yaml", project_raw)
         artifacts.yaml("inputs/scoring.yaml", scoring_raw)
+        artifacts.yaml("inputs/backtest_contract.yaml", backtest_contract_raw)
         artifacts.json("manifest.json", manifest)
         scorer = AlphaScorer(scoring_raw)
         try:
@@ -122,8 +125,29 @@ class ExperimentRunner:
                 manifest["factor_source_kind"] = "factor_combination"
             else:
                 factor_values = FactorEngine().compute(panel, factor)
+            if combination_spec:
+                audit_compute = lambda prefix: FactorCombinationEngine().run(
+                    prefix, factor_path
+                ).factor_values
+            else:
+                audit_compute = lambda prefix: FactorEngine().compute(prefix, factor)
+            temporal_audit = FactorEngine.audit_temporal_consistency(
+                panel, factor_values, audit_compute
+            )
+            # Compute with all pre-sample history, then crop the evidence and backtest.
+            # This preserves rolling/lag warm-up at sample_start_date.
+            panel = panel.loc[sample_mask].reset_index(drop=True)
+            factor_dates = pd.to_datetime(factor_values["trade_date"])
+            factor_mask = pd.Series(True, index=factor_values.index)
+            if experiment.sample_start_date:
+                factor_mask &= factor_dates >= pd.Timestamp(experiment.sample_start_date)
+            if experiment.sample_end_date:
+                factor_mask &= factor_dates <= pd.Timestamp(experiment.sample_end_date)
+            factor_values = factor_values.loc[factor_mask].reset_index(drop=True)
             artifacts.parquet("factor_values.parquet", factor_values)
-            l0 = evaluate_factor_quality(panel, factor_values, factor, experiment.stage_l0)
+            l0 = evaluate_factor_quality(
+                panel, factor_values, factor, experiment.stage_l0, temporal_audit=temporal_audit
+            )
             artifacts.json("l0_quality.json", l0)
             if not l0["passed"]:
                 l1 = {"passed": False, "gate_paths": {}, "results": []}
@@ -280,6 +304,35 @@ class ExperimentRunner:
         if uses_liquid and "daily_basic_coverage" in issues:
             blockers.append("daily_basic_coverage")
         return blockers
+
+    @staticmethod
+    def _validate_backtest_contract(contract: dict, experiment) -> None:
+        """Fail fast when executable experiment settings drift from the V1 contract."""
+        l2 = experiment.stage_l2
+        expected = {
+            "signal_time": (contract.get("signal_time"), "T_CLOSE"),
+            "entry": (contract.get("entry"), "T_PLUS_1_OPEN"),
+            "rebalance_frequency": (contract.get("rebalance_frequency"), l2.rebalance_frequency),
+            "portfolio.model": (contract.get("portfolio", {}).get("model"), "independent_cash_sleeves"),
+            "portfolio.weighting": (contract.get("portfolio", {}).get("weighting"), l2.weighting),
+            "execution.lot_size": (contract.get("execution", {}).get("lot_size"), l2.lot_size),
+            "execution.unfilled_buy": (contract.get("execution", {}).get("unfilled_buy"), l2.no_fill_policy),
+        }
+        aliases = {"1D": "1D", "equal": "equal", "keep_cash": "keep_cash"}
+        mismatches = [name for name, (actual, wanted) in expected.items()
+                      if aliases.get(actual, actual) != aliases.get(wanted, wanted)]
+        constraints = l2.execution_constraints
+        required_policies = {
+            "execution.buy_limit_up": (contract.get("execution", {}).get("buy_limit_up") == "reject"
+                                       and constraints.cannot_buy_limit_up),
+            "execution.sell_limit_down": (contract.get("execution", {}).get("sell_limit_down") == "defer"
+                                          and constraints.cannot_sell_limit_down),
+            "execution.suspended": (contract.get("execution", {}).get("suspended") == "no_trade"
+                                    and constraints.exclude_suspended),
+        }
+        mismatches.extend(name for name, valid in required_policies.items() if not valid)
+        if mismatches:
+            raise ValueError("Backtest settings drift from backtest_contract_v1: " + ", ".join(mismatches))
 
     @staticmethod
     def _parameter_neighborhood(panel, factor, experiment) -> list[dict]:

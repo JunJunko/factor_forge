@@ -1,0 +1,114 @@
+# Factor Forge V1 原子因子模板（供大模型填写）
+#
+# 填写规则：
+# 1. 只允许使用本模板已有的结构；禁止创造新字段，未知字段会导致校验失败。
+# 2. 因子 YAML 只描述因子计算；不要填写数据源、样本日期、TopN、持有期或交易成本。
+# 3. calculation.features 和 calculation.formula 只能使用受限 DSL，禁止 Python 代码。
+# 4. 公式读取的每个原始字段都必须列入 data.required_fields。
+# 5. lookback_days 必须大于或等于公式实际需要的最大历史行数。
+# 6. 输出纯 YAML，不要使用 Markdown 代码围栏，也不要删除必要字段。
+
+# 配置格式版本；V1 固定填写 1。
+version: 1
+
+# 配置类型；原子因子固定填写 factor。
+kind: factor
+
+# 因子的身份信息和研究假设。
+factor:
+  # 因子唯一名称；只能使用小写字母、数字和下划线，并且必须以字母开头。
+  name: replace_me_factor
+
+  # 面向研究人员展示的简短中文名称。
+  label: 请替换为因子名称
+
+  # 准确描述因子如何计算、使用了哪些信息以及数值代表什么。
+  description: 请替换为因子计算逻辑说明
+
+  # 因子的经济学或行为金融假设；不能只重复公式。
+  hypothesis: 请替换为可证伪的因子假设
+
+  # 原始因子方向：positive=值越大预期收益越高；negative=值越小预期收益越高；unknown=尚未冻结方向。
+  direction: unknown
+
+  # 预期截面形态：monotonic=单调；top_tail=仅高值端有效；bottom_tail=仅低值端有效；unknown=未知。
+  expected_shape: unknown
+
+# 因子所需的数据范围。
+data:
+  # 数据频率；V1 只支持 daily。
+  frequency: daily
+
+  # 公式和所有中间特征实际读取的原始字段；必须完整声明，不能声明后不用，也不能用而不声明。
+  # 推荐使用 DSL 别名：open/high/low/close/volume/amount/market_cap/industry。
+  # 也可使用面板规范字段，例如 turnover_rate、industry_l2_code。
+  required_fields:
+    - close
+
+  # 计算当日因子所需的最大历史交易行数，不含当日；必须覆盖嵌套 lag/ret/rolling 的累计回看。
+  # 示例：ret(lag(close, 1), 20) 需要 1 + 20 = 21。
+  lookback_days: 20
+
+# 因子的计算范围和截面分组方式。
+scope:
+  # 因子计算后的掩码范围：default=不额外掩码；tradeable=仅可交易股票；liquid=仅流动性股票。
+  universe: default
+
+  # 截面计算范围：market=全市场截面；industry=按行业分别计算截面算子。
+  cross_section: market
+
+  # cross_section=industry 时使用的面板行业字段；L1 通常为 industry_l1_code，L2 为 industry_l2_code。
+  group_field: industry_l1_code
+
+  # 行业分类标准；当前项目使用 SW2021。
+  industry_standard: SW2021
+
+  # 行业层级；只能为 L1 或 L2，并应与 group_field 及项目配置一致。
+  industry_level: L1
+
+  # 是否要求行业和状态数据满足 point-in-time 语义；研究因子应保持 true。
+  point_in_time_required: true
+
+  # 行业内有效股票少于该数量时，行业截面结果置为空；必须大于或等于 2。
+  min_group_size: 10
+
+# 因子的参数、中间特征、最终公式和后处理。
+calculation:
+  # 可调参数字典；键名可在 features/formula 中直接引用。
+  # 不需要参数时填写 parameters: {}。
+  parameters:
+    # 参数名称；名称应表达用途，例如 window、skip、fast_window。
+    window:
+      # 本次主实验使用的参数值；窗口参数必须为非负整数，并满足对应算子的最小值。
+      value: 20
+
+      # 稳健性检验使用的相邻参数值；不做邻域检验时填写 []。
+      robustness_neighbors: [15, 20, 30]
+
+  # 按书写顺序计算的中间特征字典；后面的特征可以引用前面的特征。
+  # 特征名不能覆盖原始字段、DSL 字段别名或参数名；不需要中间特征时填写 features: {}。
+  features:
+    # 示例中间特征：20 个交易日前的复权收盘价。请替换名称和公式，或删除本示例。
+    past_close: lag(close, window)
+
+  # 最终因子公式，必须产生逐日逐股票的 Series；这里只能使用已声明字段、参数、中间特征和白名单算子。
+  # 白名单算子：ret、lag、delta、mean、std、slope、max、min、cs_rank、cs_percentile、cs_zscore、
+  # group_mean、abs、log、clip、where，以及基本算术和单条件比较。
+  formula: close / past_close - 1
+
+  # 缺失值策略；V1 固定为 skip，即输入不足时保留为空，不做隐式填充。
+  missing_policy: skip
+
+  # 截面缩尾方式：none=不缩尾；mad=逐日使用中位数绝对偏差缩尾。
+  winsorize: mad
+
+  # winsorize=mad 时的上下界倍数；常用值为 5.0。
+  mad_scale: 5.0
+
+  # 截面标准化方式：none=保留原值；zscore=逐日做总体标准差 z-score。
+  standardize: zscore
+
+# 输出契约。
+output:
+  # 因子输出列名；V1 固定填写 factor_value。
+  value_field: factor_value

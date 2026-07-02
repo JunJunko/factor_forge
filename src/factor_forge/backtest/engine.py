@@ -142,7 +142,7 @@ class BacktestEngine:
 
     @staticmethod
     def _mark_price_lookup(data: pd.DataFrame) -> dict[tuple[pd.Timestamp, str], float]:
-        ordered = data.sort_values(["ts_code", "trade_date"]).copy()
+        ordered = data[["ts_code", "trade_date", "adj_open", "adj_close"]].sort_values(["ts_code", "trade_date"])
         base = ordered["adj_open"].fillna(ordered["adj_close"])
         ordered["mark"] = base.groupby(ordered["ts_code"]).ffill()
         return {(row.trade_date, row.ts_code): row.mark for row in ordered.itertuples()}
@@ -201,7 +201,7 @@ class BacktestEngine:
 
     @staticmethod
     def _benchmark_returns(data: pd.DataFrame, universe: str, dates: list) -> list[float]:
-        ordered = data.sort_values(["ts_code", "trade_date"]).copy()
+        ordered = data[["ts_code", "trade_date", "adj_open", f"is_{universe}"]].sort_values(["ts_code", "trade_date"])
         grouped = ordered.groupby("ts_code")["adj_open"]
         ordered["tradable_forward_return"] = grouped.shift(-2) / grouped.shift(-1) - 1
         means = ordered[ordered[f"is_{universe}"].fillna(False)].groupby("trade_date")["tradable_forward_return"].mean()

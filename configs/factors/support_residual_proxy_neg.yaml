@@ -1,0 +1,39 @@
+version: 1
+factor:
+  name: support_residual_proxy_neg
+  label: 承接残差反向（短期反转代理，DSL 近似）
+  description: >
+    与 support_residual_proxy 同一 DSL 近似公式，但取反向：
+    数据显示该合成项与次日收益呈显著负相关（p≈4e-10），
+    属 A 股隔日短期反转效应，故 direction 设为 negative，
+    将因子值取负号后等价于“今日相对越弱、明日越易反弹”的反转信号。
+  hypothesis: >
+    今日在行业中性意义上相对越弱（含卖压越重）的标的，
+    次日越容易发生反弹，未来收益在截面上更高。
+  direction: negative
+  expected_shape: monotonic
+data:
+  frequency: daily
+  required_fields: [close, turnover_rate, industry_l2_code]
+  lookback_days: 2
+scope:
+  universe: liquid
+  cross_section: market
+  group_field: industry_l2_code
+  industry_standard: SW2021
+  industry_level: L2
+  point_in_time_required: true
+  min_group_size: 10
+calculation:
+  features:
+    ret_1d: ret(close, 1)
+    ind_ret: group_mean(ret(close, 1), by=industry_l2_code)
+    rel_ret: ret_1d - ind_ret
+    sell_pressure: where(ret_1d < 0, cs_zscore(turnover_rate) * abs(ret_1d), 0)
+  formula: cs_zscore(rel_ret) - cs_zscore(sell_pressure)
+  missing_policy: skip
+  winsorize: mad
+  mad_scale: 5.0
+  standardize: zscore
+output:
+  value_field: factor_value

@@ -56,6 +56,22 @@ def test_declared_lookback_cannot_hide_formula_history(panel):
         FactorEngine().compute(panel, spec)
 
 
+def test_formula_cannot_read_an_undeclared_panel_field(panel):
+    spec = factor_spec("ret(amount, 1)")
+    with pytest.raises(DSLValidationError, match="not declared"):
+        FactorEngine().compute(panel, spec)
+
+
+def test_temporal_audit_recomputes_historical_prefixes(panel):
+    spec = factor_spec("ret(close, 2)")
+    baseline = FactorEngine().compute(panel, spec)
+    audit = FactorEngine.audit_temporal_consistency(
+        panel, baseline, lambda prefix: FactorEngine().compute(prefix, spec)
+    )
+    assert audit["checked_cutoffs"] > 0
+    assert audit["future_data_violations"] == 0
+
+
 def test_industry_rank_respects_group_boundaries(panel):
     spec = factor_spec("cs_rank(close, by=industry)")
     spec.scope.cross_section = "industry"

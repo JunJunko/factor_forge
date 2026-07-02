@@ -45,6 +45,7 @@ class DSLContext:
     panel: pd.DataFrame
     values: dict[str, Any]
     min_group_size: int = 10
+    allowed_fields: set[str] | None = None
 
 
 class FormulaEvaluator:
@@ -75,6 +76,10 @@ class FormulaEvaluator:
                 return self.context.values[node.id]
             field = FIELD_ALIASES.get(node.id, node.id)
             if field in self.context.panel.columns:
+                if self.context.allowed_fields is not None and field not in self.context.allowed_fields:
+                    raise DSLValidationError(
+                        f"Field {node.id!r} is used by the formula but is not declared in data.required_fields"
+                    )
                 return self.context.panel[field]
             raise DSLValidationError(f"Unknown field or feature: {node.id}")
         if isinstance(node, ast.BinOp) and type(node.op) in _BINARY:

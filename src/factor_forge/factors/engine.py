@@ -17,7 +17,12 @@ class FactorEngine:
             name: parameter.value
             for name, parameter in spec.calculation.parameters.items()
         }
-        context = DSLContext(indexed, values, spec.scope.min_group_size)
+        allowed_fields = {FIELD_ALIASES.get(field, field) for field in spec.data.required_fields}
+        if spec.scope.cross_section == "industry":
+            allowed_fields.add(spec.scope.group_field)
+            if spec.scope.group_field == "industry_l1_code":
+                allowed_fields.add(FIELD_ALIASES["industry"])
+        context = DSLContext(indexed, values, spec.scope.min_group_size, allowed_fields)
         evaluator = FormulaEvaluator(context)
         feature_lookbacks: dict[str, int] = {}
         for name, formula in spec.calculation.features.items():
@@ -48,6 +53,35 @@ class FactorEngine:
         if spec.scope.cross_section == "industry":
             result["group_code"] = indexed[spec.scope.group_field].to_numpy()
         return result
+
+    @staticmethod
+    def audit_temporal_consistency(
+        panel: pd.DataFrame,
+        baseline: pd.DataFrame,
+        compute,
+        max_cutoffs: int = 3,
+    ) -> dict:
+        """Recompute prefixes and prove that later rows cannot change earlier values."""
+        dates = pd.Index(pd.to_datetime(panel["trade_date"]).unique()).sort_values()
+        if len(dates) < 2:
+            return {"checked_cutoffs": 0, "future_data_violations": 0}
+        candidates = np.arange(max(1, len(dates) // 4), len(dates) - 1)
+        indices = np.unique(np.linspace(0, len(candidates) - 1, min(max_cutoffs, len(candidates)), dtype=int))
+        cutoffs = [dates[candidates[index]] for index in indices]
+        violations = 0
+        for cutoff in cutoffs:
+            prefix = panel.loc[pd.to_datetime(panel["trade_date"]) <= cutoff].copy()
+            recomputed = compute(prefix)
+            expected = baseline.loc[pd.to_datetime(baseline["trade_date"]) == cutoff,
+                                    ["trade_date", "ts_code", "factor_value"]]
+            actual = recomputed.loc[pd.to_datetime(recomputed["trade_date"]) == cutoff,
+                                    ["trade_date", "ts_code", "factor_value"]]
+            compared = expected.merge(actual, on=["trade_date", "ts_code"], how="outer",
+                                      suffixes=("_expected", "_actual"))
+            equal = np.isclose(compared["factor_value_expected"], compared["factor_value_actual"],
+                               rtol=1e-10, atol=1e-12, equal_nan=True)
+            violations += int((~equal).sum())
+        return {"checked_cutoffs": len(cutoffs), "future_data_violations": violations}
 
     @staticmethod
     def _normalize_panel(panel: pd.DataFrame) -> pd.DataFrame:

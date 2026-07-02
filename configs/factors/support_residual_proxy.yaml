@@ -1,0 +1,39 @@
+version: 1
+factor:
+  name: support_residual_proxy
+  label: 承接残差（DSL 近似）
+  description: >
+    在控制行业/市场收益后，衡量价格对高换手卖压的相对抗跌强度。
+    由于 V1 禁止截面回归，这里用“截面标准化线性合成”近似原本的 OLS 残差：
+    先取行业中性收益（同时控制市场与行业），再减去“高换手 × 下跌幅度”
+    构造的卖压代理的截面标准化值。残差为正 = 比卖压所预测的更抗跌。
+  hypothesis: >
+    在相同卖盘压力下比同行更抗跌的标的，具有潜在承接/吸筹特征，
+    其未来收益在截面上更高。
+  direction: positive
+  expected_shape: monotonic
+data:
+  frequency: daily
+  required_fields: [close, turnover_rate, industry_l2_code]
+  lookback_days: 2
+scope:
+  universe: liquid
+  cross_section: market
+  group_field: industry_l2_code
+  industry_standard: SW2021
+  industry_level: L2
+  point_in_time_required: true
+  min_group_size: 10
+calculation:
+  features:
+    ret_1d: ret(close, 1)
+    ind_ret: group_mean(ret(close, 1), by=industry_l2_code)
+    rel_ret: ret_1d - ind_ret
+    sell_pressure: where(ret_1d < 0, cs_zscore(turnover_rate) * abs(ret_1d), 0)
+  formula: cs_zscore(rel_ret) - cs_zscore(sell_pressure)
+  missing_policy: skip
+  winsorize: mad
+  mad_scale: 5.0
+  standardize: zscore
+output:
+  value_field: factor_value

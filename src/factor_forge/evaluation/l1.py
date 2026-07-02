@@ -10,7 +10,7 @@ from .neutralization import build_variants
 
 
 def _forward_open_return(panel: pd.DataFrame, horizon: int) -> pd.Series:
-    ordered = panel.sort_values(["ts_code", "trade_date"])
+    ordered = panel[["ts_code", "trade_date", "adj_open"]].sort_values(["ts_code", "trade_date"])
     grouped = ordered.groupby("ts_code", sort=False)["adj_open"]
     entry = grouped.shift(-1)
     exit_price = grouped.shift(-(horizon + 1))
@@ -80,7 +80,11 @@ def _fdr_bh(rows: list[dict]) -> None:
 def evaluate_predictive_power(
     panel: pd.DataFrame, factor_values: pd.DataFrame, spec: FactorSpec, config: L1Config
 ) -> dict:
-    merged = panel.merge(
+    candidates = ["trade_date", "ts_code", "adj_open", "log_total_mv", "industry_l1_code"]
+    candidates += [f"is_{universe}" for universe in config.universes]
+    seen = set()
+    needed = [c for c in candidates if c in panel.columns and not (c in seen or seen.add(c))]
+    merged = panel[needed].merge(
         factor_values[["trade_date", "ts_code", "factor_value"]],
         on=["trade_date", "ts_code"], how="left",
     ).sort_values(["ts_code", "trade_date"]).reset_index(drop=True)

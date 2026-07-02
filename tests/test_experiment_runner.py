@@ -5,13 +5,21 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import yaml
+import pytest
+from pydantic import ValidationError
 
 from factor_forge.data import DataVersionRepository
 from factor_forge.experiments import ExperimentRunner
+from factor_forge.config import ExperimentSpec
 
 
 def _write(path: Path, value: dict):
     path.write_text(yaml.safe_dump(value, allow_unicode=True, sort_keys=False), encoding="utf-8")
+
+
+def test_unknown_yaml_key_is_rejected_instead_of_using_a_default():
+    with pytest.raises(ValidationError, match="top_nn"):
+        ExperimentSpec.model_validate({"name": "typo", "stage_l2": {"top_nn": [2]}})
 
 
 def test_declarative_experiment_runs_without_factor_code_changes(tmp_path):
@@ -59,6 +67,7 @@ def test_declarative_experiment_runs_without_factor_code_changes(tmp_path):
     _write(experiment_path, {
         "version": 1, "name": "test_v1", "project_config": str(project_path),
         "factor_config": str(factor_path), "data_version": version,
+        "sample_start_date": dates[10].strftime("%Y%m%d"),
         "stage_l0": {"min_coverage": 0.7, "max_missing_rate": 0.3,
                      "min_daily_cross_section": 20, "min_unique_ratio": 0.01},
         "stage_l1": {"forward_horizons": [1, 3], "quantile_groups": 5,
@@ -73,3 +82,7 @@ def test_declarative_experiment_runs_without_factor_code_changes(tmp_path):
     assert (run_dir / "factor_values.parquet").exists()
     assert (run_dir / "alpha_assessment.json").exists()
     assert len(list((run_dir / "l2").glob("*/metrics.json"))) == 8
+    saved_factors = pd.read_parquet(run_dir / "factor_values.parquet")
+    first_date = saved_factors["trade_date"].min()
+    assert first_date == dates[10]
+    assert saved_factors.loc[saved_factors["trade_date"] == first_date, "factor_value"].notna().all()
