@@ -237,6 +237,14 @@ class L0Config(BaseModel):
     future_data_violation: int = 0
 
 
+class ConditionalICConfig(BaseModel):
+    enabled: bool = False
+    conditioning_factor: Literal["main_factor"] | Path = "main_factor"
+    quantile_groups: int = Field(default=5, ge=2, le=20)
+    min_group_size: int = Field(default=20, ge=3)
+    store_daily_ic: bool = True
+
+
 class L1Config(BaseModel):
     forward_horizons: list[int] = Field(default_factory=lambda: [1, 3, 5, 10, 15])
     quantile_groups: int = 10
@@ -247,6 +255,7 @@ class L1Config(BaseModel):
     targets: list[Literal["stock_return", "stock_minus_sw_l1_return"]] = Field(
         default_factory=lambda: ["stock_return"]
     )
+    conditional_ic: ConditionalICConfig = Field(default_factory=ConditionalICConfig)
 
 
 class IndustrySelectorOverrides(BaseModel):
@@ -294,6 +303,22 @@ class CostModel(BaseModel):
     stamp_duty_bps_sell: float = 5
 
 
+class L2ConditionFilterConfig(BaseModel):
+    enabled: bool = False
+    source: Literal["stage_l1_conditional_ic"] = "stage_l1_conditional_ic"
+    include_quantiles: list[int] = Field(default_factory=lambda: [5], min_length=1)
+    min_cross_section: int = Field(default=100, ge=2)
+    benchmark: Literal["condition_equal_weight"] = "condition_equal_weight"
+
+    @model_validator(mode="after")
+    def unique_positive_quantiles(self):
+        if any(value < 1 for value in self.include_quantiles):
+            raise ValueError("condition_filter include_quantiles must be positive")
+        if len(self.include_quantiles) != len(set(self.include_quantiles)):
+            raise ValueError("condition_filter include_quantiles must be unique")
+        return self
+
+
 class L2Config(BaseModel):
     rebalance_frequency: Literal["1D"] = "1D"
     holding_periods: list[int] = Field(default_factory=lambda: [1, 3, 5, 10, 15])
@@ -310,6 +335,7 @@ class L2Config(BaseModel):
     cost_model: CostModel = Field(default_factory=CostModel)
     cost_scenarios_bps: list[int] = Field(default_factory=lambda: [0, 10, 20])
     benchmarks: list[str] = Field(default_factory=lambda: ["universe_equal_weight"])
+    condition_filter: L2ConditionFilterConfig = Field(default_factory=L2ConditionFilterConfig)
 
 
 class L3Config(BaseModel):
@@ -376,6 +402,13 @@ class ExperimentSpec(BaseModel):
             raise ValueError("V1 holding periods are limited to 1/3/5/10/15")
         if not set(self.stage_l2.top_n) <= allowed_n:
             raise ValueError("V1 TopN values are limited to 2/5/10/20")
+        condition_filter = self.stage_l2.condition_filter
+        if condition_filter.enabled:
+            if not self.stage_l1.conditional_ic.enabled:
+                raise ValueError("L2 condition_filter requires stage_l1.conditional_ic.enabled=true")
+            groups = self.stage_l1.conditional_ic.quantile_groups
+            if any(value > groups for value in condition_filter.include_quantiles):
+                raise ValueError("L2 condition_filter quantiles exceed L1 conditional_ic.quantile_groups")
         return self
 
 

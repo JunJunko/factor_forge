@@ -10,12 +10,12 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from factor_forge.backtest import BacktestEngine
+from factor_forge.backtest import BacktestEngine, build_condition_membership
 from factor_forge.config import factor_source_kind, load_experiment, load_factor, load_factor_combination, load_project, load_yaml
 from factor_forge.combinations import FactorCombinationEngine
 from factor_forge.combinations.diagnostics import CombinationDiagnostics
 from factor_forge.data import DataVersionRepository
-from factor_forge.evaluation import evaluate_factor_quality, evaluate_predictive_power
+from factor_forge.evaluation import evaluate_conditional_ic, evaluate_factor_quality, evaluate_predictive_power
 from factor_forge.evaluation.robustness import evaluate_robustness
 from factor_forge.factors import FactorEngine
 from factor_forge.scoring import AlphaScorer
@@ -40,6 +40,14 @@ class ExperimentRunner:
         project_raw, factor_raw = load_yaml(project_path), load_yaml(factor_path)
         scoring_raw = load_yaml(scoring_path)
         backtest_contract_raw = load_yaml(backtest_contract_path)
+        conditional_config = experiment.stage_l1.conditional_ic
+        conditioning_path = None
+        conditioning_raw = None
+        conditioning_source_kind = None
+        if conditional_config.enabled and conditional_config.conditioning_factor != "main_factor":
+            conditioning_path = Path(conditional_config.conditioning_factor)
+            conditioning_raw = load_yaml(conditioning_path)
+            conditioning_source_kind = factor_source_kind(conditioning_path)
         self._validate_backtest_contract(backtest_contract_raw, experiment)
         project = load_project(project_path)
         source_kind = factor_source_kind(factor_path)
@@ -84,7 +92,7 @@ class ExperimentRunner:
         coverage_blockers = self._coverage_blockers(data_manifest, factor, experiment)
         run_id = self._run_id(
             factor.factor.name, data_version, factor_raw, experiment_raw, project_raw, scoring_raw,
-            backtest_contract_raw,
+            backtest_contract_raw, conditioning_raw or {},
         )
         artifacts = RunArtifacts(project.paths.artifacts_root, run_id)
         started = datetime.now(timezone.utc)
@@ -101,6 +109,8 @@ class ExperimentRunner:
         artifacts.yaml("inputs/project.yaml", project_raw)
         artifacts.yaml("inputs/scoring.yaml", scoring_raw)
         artifacts.yaml("inputs/backtest_contract.yaml", backtest_contract_raw)
+        if conditioning_raw is not None:
+            artifacts.yaml("inputs/conditioning_factor.yaml", conditioning_raw)
         artifacts.json("manifest.json", manifest)
         scorer = AlphaScorer(scoring_raw)
         try:
@@ -134,6 +144,48 @@ class ExperimentRunner:
             temporal_audit = FactorEngine.audit_temporal_consistency(
                 panel, factor_values, audit_compute
             )
+            conditioning_values = None
+            conditioning_name = None
+            conditioning_audit = None
+            if conditional_config.enabled:
+                if conditioning_path is None:
+                    conditioning_values = factor_values.copy()
+                    conditioning_name = factor.factor.name
+                    conditioning_audit = temporal_audit
+                elif conditioning_source_kind == "factor_combination":
+                    conditioning_combination = load_factor_combination(conditioning_path)
+                    conditioning_name = conditioning_combination.factor_combination.id
+                    conditioning_values = FactorCombinationEngine().run(
+                        panel, conditioning_path,
+                        cache_context={"data_version": data_version, "base_universe": "conditional_ic"},
+                    ).factor_values
+                    conditioning_audit = FactorEngine.audit_temporal_consistency(
+                        panel, conditioning_values,
+                        lambda prefix: FactorCombinationEngine().run(
+                            prefix, conditioning_path
+                        ).factor_values,
+                    )
+                else:
+                    conditioning_spec = load_factor(conditioning_path)
+                    conditioning_name = conditioning_spec.factor.name
+                    conditioning_values = FactorEngine().compute(panel, conditioning_spec)
+                    conditioning_audit = FactorEngine.audit_temporal_consistency(
+                        panel, conditioning_values,
+                        lambda prefix: FactorEngine().compute(prefix, conditioning_spec),
+                    )
+                if conditioning_audit.get("future_data_violations", 0) > 0:
+                    raise ValueError(
+                        "Conditional IC conditioning factor failed temporal consistency audit"
+                    )
+                manifest["conditional_ic"] = {
+                    "enabled": True,
+                    "conditioning_factor": conditioning_name,
+                    "source": "main_factor" if conditioning_path is None else str(conditioning_path),
+                    "source_kind": "main_factor" if conditioning_path is None else conditioning_source_kind,
+                    "quantile_groups": conditional_config.quantile_groups,
+                    "min_group_size": conditional_config.min_group_size,
+                    "temporal_audit": conditioning_audit,
+                }
             # Compute with all pre-sample history, then crop the evidence and backtest.
             # This preserves rolling/lag warm-up at sample_start_date.
             panel = panel.loc[sample_mask].reset_index(drop=True)
@@ -144,6 +196,16 @@ class ExperimentRunner:
             if experiment.sample_end_date:
                 factor_mask &= factor_dates <= pd.Timestamp(experiment.sample_end_date)
             factor_values = factor_values.loc[factor_mask].reset_index(drop=True)
+            if conditioning_values is not None:
+                conditioning_dates = pd.to_datetime(conditioning_values["trade_date"])
+                conditioning_mask = pd.Series(True, index=conditioning_values.index)
+                if experiment.sample_start_date:
+                    conditioning_mask &= conditioning_dates >= pd.Timestamp(experiment.sample_start_date)
+                if experiment.sample_end_date:
+                    conditioning_mask &= conditioning_dates <= pd.Timestamp(experiment.sample_end_date)
+                conditioning_values = conditioning_values.loc[conditioning_mask].reset_index(drop=True)
+                if conditioning_path is not None:
+                    artifacts.parquet("conditioning_factor_values.parquet", conditioning_values)
             artifacts.parquet("factor_values.parquet", factor_values)
             l0 = evaluate_factor_quality(
                 panel, factor_values, factor, experiment.stage_l0, temporal_audit=temporal_audit
@@ -162,6 +224,18 @@ class ExperimentRunner:
                 assessment["hard_flags"]["data_coverage"] = True
                 return self._finish(artifacts, manifest, assessment, l0, l1, [], started, "INVALID_DATA_COVERAGE")
             l1 = evaluate_predictive_power(panel, factor_values, factor, experiment.stage_l1)
+            if conditional_config.enabled:
+                conditional_result, conditional_daily = evaluate_conditional_ic(
+                    panel, factor_values, conditioning_values, factor, experiment.stage_l1,
+                    conditioning_name,
+                )
+                l1["conditional_ic"] = conditional_result
+                artifacts.csv(
+                    "l1_conditional_ic_summary.csv",
+                    pd.json_normalize(conditional_result["results"], sep="_"),
+                )
+                if conditional_config.store_daily_ic:
+                    artifacts.parquet("l1_conditional_ic_daily.parquet", conditional_daily)
             artifacts.json("l1_predictive_power.json", l1)
             if combination_result:
                 diagnostics = CombinationDiagnostics().run(
@@ -207,6 +281,46 @@ class ExperimentRunner:
             if not l1["passed"]:
                 assessment = scorer.score(factor, l0, l1, [])
                 return self._finish(artifacts, manifest, assessment, l0, l1, [], started, "STOPPED_L1")
+            condition_filter = experiment.stage_l2.condition_filter
+            condition_memberships: dict[str, pd.DataFrame] = {}
+            if condition_filter.enabled:
+                membership_frames = []
+                coverage_rows = []
+                for universe in experiment.stage_l2.universes:
+                    membership = build_condition_membership(
+                        panel,
+                        conditioning_values,
+                        universe=universe,
+                        quantile_groups=conditional_config.quantile_groups,
+                        include_quantiles=condition_filter.include_quantiles,
+                        min_cross_section=condition_filter.min_cross_section,
+                    )
+                    membership = membership.loc[membership["selection_eligible"]].copy()
+                    condition_memberships[universe] = membership
+                    stored = membership.copy()
+                    stored["universe"] = universe
+                    membership_frames.append(stored)
+                    daily_count = membership.groupby("trade_date").size()
+                    coverage_rows.append({
+                        "universe": universe,
+                        "days": int(daily_count.size),
+                        "mean_selected": float(daily_count.mean()) if len(daily_count) else 0.0,
+                        "median_selected": float(daily_count.median()) if len(daily_count) else 0.0,
+                        "min_selected": int(daily_count.min()) if len(daily_count) else 0,
+                        "max_selected": int(daily_count.max()) if len(daily_count) else 0,
+                    })
+                membership_artifact = pd.concat(membership_frames, ignore_index=True)
+                artifacts.parquet("l2_condition_membership.parquet", membership_artifact)
+                artifacts.csv("l2_condition_filter_summary.csv", pd.DataFrame(coverage_rows))
+                manifest["l2_condition_filter"] = {
+                    "enabled": True,
+                    "source": "stage_l1_conditional_ic",
+                    "conditioning_factor": conditioning_name,
+                    "quantile_groups": conditional_config.quantile_groups,
+                    "include_quantiles": condition_filter.include_quantiles,
+                    "min_cross_section": condition_filter.min_cross_section,
+                    "benchmark": condition_filter.benchmark,
+                }
             l2_rows = []
             engine = BacktestEngine()
             combinations = 0
@@ -221,8 +335,13 @@ class ExperimentRunner:
                                 constraints=experiment.stage_l2.execution_constraints,
                                 cost_model=experiment.stage_l2.cost_model, cost_scenario_bps=cost,
                                 market_benchmark=market_benchmark,
+                                selection_membership=condition_memberships.get(universe),
                             )
-                            key = f"{universe}__top{top_n}__hold{holding}__cost{cost}"
+                            condition_key = (
+                                "__condition_q" + "_".join(map(str, condition_filter.include_quantiles))
+                                if condition_filter.enabled else ""
+                            )
+                            key = f"{universe}{condition_key}__top{top_n}__hold{holding}__cost{cost}"
                             base = f"l2/{key}"
                             artifacts.json(f"{base}/metrics.json", result.metrics)
                             if experiment.output.store_trade_details:
@@ -234,6 +353,8 @@ class ExperimentRunner:
                                 "universe": universe, "top_n": top_n, "holding_days": holding,
                                 "cost_bps": cost, "metrics": result.metrics, "daily": result.daily,
                                 "positions": result.positions,
+                                "condition_quantiles": condition_filter.include_quantiles
+                                if condition_filter.enabled else None,
                             })
                             combinations += 1
             manifest["selection_metadata"]["total_combinations_tested"] = combinations

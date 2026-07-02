@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import numpy as np
@@ -49,7 +50,10 @@ def test_declarative_experiment_runs_without_factor_code_changes(tmp_path):
     panel = pd.DataFrame(rows)
     data_root, db = tmp_path / "data", tmp_path / "metadata.sqlite3"
     version = DataVersionRepository(data_root, db).publish(panel, source="test")
-    project_path, factor_path, experiment_path = tmp_path / "project.yaml", tmp_path / "factor.yaml", tmp_path / "experiment.yaml"
+    project_path = tmp_path / "project.yaml"
+    factor_path = tmp_path / "factor.yaml"
+    condition_path = tmp_path / "condition.yaml"
+    experiment_path = tmp_path / "experiment.yaml"
     _write(project_path, {
         "project_name": "test", "timezone": "Asia/Shanghai",
         "paths": {"data_root": str(data_root), "metadata_db": str(db), "artifacts_root": str(tmp_path / "runs")},
@@ -64,6 +68,16 @@ def test_declarative_experiment_runs_without_factor_code_changes(tmp_path):
                         "winsorize": "none", "standardize": "none"},
         "output": {"value_field": "factor_value"},
     })
+    _write(condition_path, {
+        "version": 1,
+        "factor": {"name": "size_condition", "label": "市值条件", "description": "测试条件因子",
+                   "hypothesis": "仅用于切分样本", "direction": "positive", "expected_shape": "unknown"},
+        "data": {"frequency": "daily", "required_fields": ["market_cap"], "lookback_days": 0},
+        "scope": {"universe": "default", "cross_section": "market", "min_group_size": 2},
+        "calculation": {"formula": "market_cap", "missing_policy": "skip",
+                        "winsorize": "none", "standardize": "none"},
+        "output": {"value_field": "factor_value"},
+    })
     _write(experiment_path, {
         "version": 1, "name": "test_v1", "project_config": str(project_path),
         "factor_config": str(factor_path), "data_version": version,
@@ -71,18 +85,39 @@ def test_declarative_experiment_runs_without_factor_code_changes(tmp_path):
         "stage_l0": {"min_coverage": 0.7, "max_missing_rate": 0.3,
                      "min_daily_cross_section": 20, "min_unique_ratio": 0.01},
         "stage_l1": {"forward_horizons": [1, 3], "quantile_groups": 5,
-                     "min_cross_section": 20, "universes": ["liquid"]},
+                     "min_cross_section": 20, "universes": ["liquid"],
+                     "conditional_ic": {"enabled": True,
+                                        "conditioning_factor": str(condition_path),
+                                        "quantile_groups": 5, "min_group_size": 3}},
         "stage_l2": {"universes": ["liquid"], "holding_periods": [1, 3],
                      "top_n": [2, 5], "cost_scenarios_bps": [0, 20],
+                     "condition_filter": {"enabled": True, "include_quantiles": [5],
+                                          "min_cross_section": 20},
                      "execution_constraints": {"min_listing_days": 60}},
     })
     result = ExperimentRunner().run(experiment_path)
     assert result["status"] == "SUCCESS"
     run_dir = Path(result["run_dir"])
     assert (run_dir / "factor_values.parquet").exists()
+    assert (run_dir / "conditioning_factor_values.parquet").exists()
+    assert (run_dir / "l1_conditional_ic_summary.csv").exists()
+    assert (run_dir / "l1_conditional_ic_daily.parquet").exists()
+    assert (run_dir / "l2_condition_membership.parquet").exists()
+    assert (run_dir / "l2_condition_filter_summary.csv").exists()
     assert (run_dir / "alpha_assessment.json").exists()
     assert len(list((run_dir / "l2").glob("*/metrics.json"))) == 8
     saved_factors = pd.read_parquet(run_dir / "factor_values.parquet")
     first_date = saved_factors["trade_date"].min()
     assert first_date == dates[10]
     assert saved_factors.loc[saved_factors["trade_date"] == first_date, "factor_value"].notna().all()
+    l1 = yaml.safe_load((run_dir / "inputs" / "experiment.yaml").read_text(encoding="utf-8"))
+    assert l1["stage_l1"]["conditional_ic"]["quantile_groups"] == 5
+    l1_result = json.loads((run_dir / "l1_predictive_power.json").read_text(encoding="utf-8"))
+    conditional = l1_result["conditional_ic"]
+    assert conditional["conditioning_factor"] == "size_condition"
+    assert {row["condition_quantile"] for row in conditional["results"]} == {1, 2, 3, 4, 5}
+    assert all("nw_t_value" in row["rank_ic"] for row in conditional["results"])
+    first_metrics = next((run_dir / "l2").glob("*condition_q5*/metrics.json"))
+    conditioned_metrics = json.loads(first_metrics.read_text(encoding="utf-8"))
+    assert conditioned_metrics["benchmark_scope"] == "condition_equal_weight"
+    assert "annualized_excess_return_vs_universe" in conditioned_metrics

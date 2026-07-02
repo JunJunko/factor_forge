@@ -1,0 +1,47 @@
+version: 1
+kind: factor
+factor:
+  name: sell_impact_deviation_60d_v1
+  label: 卖盘冲击偏离60日正常区间V1
+  description: >
+    复用卖盘冲击效率的日频状态定义，并以截至前一交易日的60日均值和标准差
+    建立每只股票自身的正常区间。最终值为当日状态相对历史正常水平的绝对
+    标准化偏离；数值越高，表示量价状态偏离过去60日常态越远。
+  hypothesis: >
+    卖盘效率对未来收益的影响可能只在明显偏离个股自身正常量价区间时出现，
+    因此该因子仅作为条件分组变量，不直接预设收益方向。
+  direction: positive
+  expected_shape: unknown
+data:
+  frequency: daily
+  required_fields: [close, turnover_rate, industry_l2_code]
+  lookback_days: 61
+scope:
+  universe: default
+  cross_section: market
+  group_field: industry_l2_code
+  industry_standard: SW2021
+  industry_level: L2
+  point_in_time_required: true
+  min_group_size: 10
+calculation:
+  parameters:
+    normal_window:
+      value: 60
+      robustness_neighbors: [40, 60, 90]
+  features:
+    ret_1d: ret(close, 1)
+    industry_ret_1d: group_mean(ret_1d, by=industry_l2_code)
+    relative_ret_1d: ret_1d - industry_ret_1d
+    sell_pressure: where(ret_1d < 0, cs_zscore(turnover_rate) * abs(ret_1d), 0)
+    impact_efficiency: cs_zscore(sell_pressure) - cs_zscore(relative_ret_1d)
+    historical_efficiency: lag(impact_efficiency, 1)
+    normal_mean: mean(historical_efficiency, normal_window)
+    normal_std: std(historical_efficiency, normal_window)
+  formula: abs((impact_efficiency - normal_mean) / normal_std)
+  missing_policy: skip
+  winsorize: mad
+  mad_scale: 5.0
+  standardize: none
+output:
+  value_field: factor_value

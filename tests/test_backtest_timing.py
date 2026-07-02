@@ -55,3 +55,36 @@ def test_limit_down_sell_is_deferred():
     result = run(panel)
     first_sell = result.trades[result.trades.side == "SELL"].iloc[0]
     assert first_sell.trade_date == pd.Timestamp("2024-01-05")
+
+
+def test_condition_membership_filters_selection_and_becomes_primary_benchmark():
+    dates = pd.bdate_range("2024-01-02", periods=4)
+    rows = []
+    for code, opens in {"A.SZ": [8.0, 10.0, 20.0, 20.0], "B.SZ": [8.0, 10.0, 5.0, 5.0]}.items():
+        stock = one_stock_panel(opens)
+        stock["ts_code"] = code
+        rows.append(stock)
+    panel = pd.concat(rows, ignore_index=True)
+    factor = panel[["trade_date", "ts_code"]].copy()
+    factor["factor_value"] = factor["ts_code"].map({"A.SZ": 2.0, "B.SZ": 1.0})
+    membership = pd.DataFrame({
+        "trade_date": dates,
+        "ts_code": "B.SZ",
+        "condition_quantile": 5,
+        "selection_eligible": True,
+    })
+    result = BacktestEngine().run(
+        panel, factor, universe="liquid", top_n=1, holding_days=1,
+        initial_cash=100_000, lot_size=100,
+        constraints=ExecutionConstraints(min_listing_days=60),
+        cost_model=CostModel(commission_bps_per_side=0, slippage_bps_per_side=0,
+                             stamp_duty_bps_sell=0),
+        cost_scenario_bps=0, selection_membership=membership,
+    )
+    buys = result.trades[result.trades.side == "BUY"]
+    assert set(buys["ts_code"]) == {"B.SZ"}
+    assert set(buys["condition_quantile"]) == {5}
+    day_three = result.daily.loc[result.daily.trade_date == dates[2]].iloc[0]
+    assert day_three["benchmark_return"] == pytest.approx(-0.5)
+    assert day_three["universe_benchmark_return"] == pytest.approx(0.25)
+    assert result.metrics["benchmark_scope"] == "condition_equal_weight"

@@ -38,6 +38,30 @@ def _summary(ic: pd.Series) -> dict:
     }
 
 
+def _newey_west_stats(values: pd.Series, max_lags: int) -> dict:
+    """HAC inference for the mean of a daily IC series."""
+    clean = values.dropna().to_numpy(dtype=float)
+    count = len(clean)
+    if count < 2:
+        return {"nw_lags": 0, "nw_t_value": None, "nw_p_value": None}
+    lags = min(max(int(max_lags), 0), count - 1)
+    centered = clean - clean.mean()
+    long_run_variance = float(np.dot(centered, centered) / count)
+    for lag in range(1, lags + 1):
+        weight = 1.0 - lag / (lags + 1.0)
+        autocovariance = float(np.dot(centered[lag:], centered[:-lag]) / count)
+        long_run_variance += 2.0 * weight * autocovariance
+    variance_of_mean = max(long_run_variance, 0.0) / count
+    if variance_of_mean <= 0:
+        return {"nw_lags": lags, "nw_t_value": None, "nw_p_value": None}
+    t_value = float(clean.mean() / math.sqrt(variance_of_mean))
+    return {
+        "nw_lags": lags,
+        "nw_t_value": t_value,
+        "nw_p_value": math.erfc(abs(t_value) / math.sqrt(2)),
+    }
+
+
 def _quantile_metrics(frame: pd.DataFrame, groups: int) -> dict:
     records = []
     for date, daily in frame.groupby("trade_date"):
@@ -63,8 +87,12 @@ def _quantile_metrics(frame: pd.DataFrame, groups: int) -> dict:
     }
 
 
-def _fdr_bh(rows: list[dict]) -> None:
-    valid = [(i, row["rank_ic"]["p_value"]) for i, row in enumerate(rows) if row["rank_ic"]["p_value"] is not None]
+def _fdr_bh(rows: list[dict], p_value_key: str = "p_value") -> None:
+    valid = [
+        (i, row["rank_ic"][p_value_key])
+        for i, row in enumerate(rows)
+        if row["rank_ic"].get(p_value_key) is not None
+    ]
     valid.sort(key=lambda item: item[1])
     count = len(valid)
     adjusted = [0.0] * count
@@ -75,6 +103,145 @@ def _fdr_bh(rows: list[dict]) -> None:
         adjusted[position] = running
     for (row_index, _), q_value in zip(valid, adjusted):
         rows[row_index]["fdr_q"] = float(q_value)
+
+
+def _assign_daily_condition_quantiles(frame: pd.DataFrame, groups: int) -> pd.Series:
+    output = pd.Series(pd.NA, index=frame.index, dtype="Int64")
+    for _, indexes in frame.groupby("trade_date").groups.items():
+        values = frame.loc[indexes, "condition_factor"]
+        if values.notna().sum() < groups:
+            continue
+        percentile = values.rank(method="average", pct=True)
+        buckets = np.ceil(percentile * groups).clip(1, groups)
+        output.loc[indexes] = buckets.astype("Int64")
+    return output
+
+
+def evaluate_conditional_ic(
+    panel: pd.DataFrame,
+    factor_values: pd.DataFrame,
+    conditioning_factor_values: pd.DataFrame,
+    spec: FactorSpec,
+    config: L1Config,
+    conditioning_factor_name: str,
+) -> tuple[dict, pd.DataFrame]:
+    """Evaluate the main factor's cross-sectional IC inside condition-factor bins."""
+    conditional = config.conditional_ic
+    candidates = ["trade_date", "ts_code", "adj_open", "log_total_mv", "industry_l1_code"]
+    candidates += [f"is_{universe}" for universe in config.universes]
+    seen = set()
+    needed = [c for c in candidates if c in panel.columns and not (c in seen or seen.add(c))]
+    merged = panel[needed].merge(
+        factor_values[["trade_date", "ts_code", "factor_value"]],
+        on=["trade_date", "ts_code"], how="left",
+    ).merge(
+        conditioning_factor_values[["trade_date", "ts_code", "factor_value"]].rename(
+            columns={"factor_value": "condition_factor"}
+        ),
+        on=["trade_date", "ts_code"], how="left",
+    ).sort_values(["ts_code", "trade_date"]).reset_index(drop=True)
+    variants = build_variants(merged, spec.scope.cross_section)
+    if spec.factor.direction == "unknown":
+        variants.update({f"{name}_negative": -value for name, value in list(variants.items())})
+
+    rows: list[dict] = []
+    daily_records: list[dict] = []
+    for horizon in config.forward_horizons:
+        merged[f"forward_{horizon}"] = _forward_open_return(merged, horizon)
+        for universe in config.universes:
+            universe_mask = merged[f"is_{universe}"].fillna(False).astype(bool)
+            for variant_name, values in variants.items():
+                sample = merged.loc[
+                    universe_mask, ["trade_date", "condition_factor", f"forward_{horizon}"]
+                ].copy()
+                sample = sample.dropna(subset=["condition_factor"])
+                sample["condition_quantile"] = _assign_daily_condition_quantiles(
+                    sample, conditional.quantile_groups
+                )
+                sample["factor"] = values.loc[universe_mask]
+                sample = sample.rename(columns={f"forward_{horizon}": "forward_return"})
+                sample = sample.dropna(subset=["factor", "forward_return", "condition_quantile"])
+                daily_size = sample.groupby("trade_date").size()
+                valid_dates = daily_size[daily_size >= config.min_cross_section].index
+                sample = sample[sample["trade_date"].isin(valid_dates)].copy()
+
+                for quantile in range(1, conditional.quantile_groups + 1):
+                    bucket = sample.loc[sample["condition_quantile"] == quantile].copy()
+                    bucket_size = bucket.groupby("trade_date").size()
+                    bucket_dates = bucket_size[bucket_size >= conditional.min_group_size].index
+                    bucket = bucket[bucket["trade_date"].isin(bucket_dates)]
+                    rank_ic = (
+                        _daily_correlation(bucket, "spearman")
+                        if len(bucket) else pd.Series(dtype=float)
+                    )
+                    summary = _summary(rank_ic)
+                    summary.update(_newey_west_stats(rank_ic, max_lags=max(horizon - 1, 0)))
+                    row = {
+                        "conditioning_factor": conditioning_factor_name,
+                        "variant": variant_name,
+                        "universe": universe,
+                        "horizon": horizon,
+                        "condition_quantile": quantile,
+                        "observations": int(len(bucket)),
+                        "days": int(rank_ic.notna().sum()),
+                        "mean_group_size": float(bucket_size.loc[bucket_dates].mean()) if len(bucket_dates) else None,
+                        "condition_value_min": float(bucket["condition_factor"].min()) if len(bucket) else None,
+                        "condition_value_median": float(bucket["condition_factor"].median()) if len(bucket) else None,
+                        "condition_value_max": float(bucket["condition_factor"].max()) if len(bucket) else None,
+                        "mean_forward_return": float(bucket["forward_return"].mean()) if len(bucket) else None,
+                        "rank_ic": summary,
+                        "significance_rank": None,
+                        "fdr_q": None,
+                    }
+                    rows.append(row)
+                    for trade_date, ic in rank_ic.dropna().items():
+                        daily_records.append({
+                            "trade_date": trade_date,
+                            "conditioning_factor": conditioning_factor_name,
+                            "variant": variant_name,
+                            "universe": universe,
+                            "horizon": horizon,
+                            "condition_quantile": quantile,
+                            "observations": int(bucket_size.get(trade_date, 0)),
+                            "rank_ic": float(ic),
+                        })
+
+    _fdr_bh(rows, p_value_key="nw_p_value")
+    context_groups: dict[tuple, list[dict]] = {}
+    for row in rows:
+        context = (row["variant"], row["universe"], row["horizon"])
+        context_groups.setdefault(context, []).append(row)
+    strongest_by_context = []
+    for context_rows in context_groups.values():
+        ranked = sorted(
+            (row for row in context_rows if row["rank_ic"].get("nw_t_value") is not None),
+            key=lambda row: abs(row["rank_ic"]["nw_t_value"]), reverse=True,
+        )
+        for rank, row in enumerate(ranked, start=1):
+            row["significance_rank"] = rank
+        if ranked:
+            strongest_by_context.append(ranked[0])
+    significant = [
+        row for row in rows if row["rank_ic"].get("nw_t_value") is not None
+    ]
+    strongest = max(
+        significant, key=lambda row: abs(row["rank_ic"]["nw_t_value"]), default=None
+    )
+    result = {
+        "enabled": True,
+        "conditioning_factor": conditioning_factor_name,
+        "quantile_groups": conditional.quantile_groups,
+        "min_group_size": conditional.min_group_size,
+        "inference": "Newey-West HAC with max_lags=horizon-1; FDR is Benjamini-Hochberg across conditional tests",
+        "strongest_result": strongest,
+        "strongest_by_context": strongest_by_context,
+        "results": rows,
+    }
+    daily_columns = [
+        "trade_date", "conditioning_factor", "variant", "universe", "horizon",
+        "condition_quantile", "observations", "rank_ic",
+    ]
+    return result, pd.DataFrame(daily_records, columns=daily_columns)
 
 
 def evaluate_predictive_power(

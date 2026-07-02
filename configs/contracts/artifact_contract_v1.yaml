@@ -11,6 +11,10 @@ required:
   - l0_quality.json
 conditional:
   l1: l1_predictive_power.json
+  conditional_ic: l1_conditional_ic_summary.csv
+  conditional_ic_daily: l1_conditional_ic_daily.parquet
+  conditional_ic_external_factor: [inputs/conditioning_factor.yaml, conditioning_factor_values.parquet]
+  l2_condition_filter: [l2_condition_membership.parquet, l2_condition_filter_summary.csv]
   l2: [l2_summary.json, l2/*/daily.parquet, l2/*/trades.parquet, l2/*/positions.parquet]
   l3: l3_robustness.json
   completed: [alpha_assessment.json, report.md]

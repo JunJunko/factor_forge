@@ -26,6 +26,7 @@ class _Position:
     entry_raw_open: float
     entry_adj_open: float
     signal_date: pd.Timestamp
+    condition_quantile: int | None = None
 
 
 @dataclass
@@ -51,11 +52,26 @@ class BacktestEngine:
         cost_model: CostModel,
         cost_scenario_bps: float | None = None,
         market_benchmark: pd.DataFrame | None = None,
+        selection_membership: pd.DataFrame | None = None,
     ) -> BacktestResult:
         data = panel.merge(
             factor_values[["trade_date", "ts_code", "factor_value"]],
             on=["trade_date", "ts_code"], how="left",
         )
+        if selection_membership is not None:
+            required = {"trade_date", "ts_code", "selection_eligible", "condition_quantile"}
+            if not required <= set(selection_membership.columns):
+                raise ValueError(
+                    "selection_membership is missing columns: "
+                    + ", ".join(sorted(required - set(selection_membership.columns)))
+                )
+            if selection_membership.duplicated(["trade_date", "ts_code"]).any():
+                raise ValueError("selection_membership keys must be unique")
+            data = data.merge(
+                selection_membership[list(required)],
+                on=["trade_date", "ts_code"], how="left",
+            )
+            data["selection_eligible"] = data["selection_eligible"].eq(True)
         data["trade_date"] = pd.to_datetime(data["trade_date"])
         data = data.sort_values(["trade_date", "ts_code"]).reset_index(drop=True)
         dates = list(pd.Index(data["trade_date"].unique()).sort_values())
@@ -88,9 +104,15 @@ class BacktestEngine:
                 if not sleeve.positions:
                     signals = by_date[signal_date]
                     universe_column = f"is_{universe}"
-                    candidates = signals[
-                        signals[universe_column].fillna(False).astype(bool) & signals["factor_value"].notna()
-                    ].sort_values(["factor_value"], ascending=False).head(top_n)
+                    candidate_mask = (
+                        signals[universe_column].fillna(False).astype(bool)
+                        & signals["factor_value"].notna()
+                    )
+                    if selection_membership is not None:
+                        candidate_mask &= signals["selection_eligible"]
+                    candidates = signals[candidate_mask].sort_values(
+                        ["factor_value"], ascending=False
+                    ).head(top_n)
                     generated += len(candidates)
                     target = sleeve.cash / top_n if top_n else 0.0
                     for ts_code in candidates.index:
@@ -112,6 +134,8 @@ class BacktestEngine:
                         position = _Position(
                             ts_code, shares, date, dates[due_index] if due_index < len(dates) else None, price,
                             float(row["adj_open"]), signal_date,
+                            int(candidates.loc[ts_code, "condition_quantile"])
+                            if selection_membership is not None else None,
                         )
                         sleeve.positions.append(position)
                         executed += 1
@@ -131,13 +155,22 @@ class BacktestEngine:
             daily_rows.append({"trade_date": date, "nav": nav, "gross_exposure": gross_exposure})
         daily = pd.DataFrame(daily_rows)
         daily["return"] = daily["nav"].pct_change().fillna(0.0)
-        daily["benchmark_return"] = self._benchmark_returns(data, universe, dates)
+        if selection_membership is not None:
+            daily["benchmark_return"] = self._benchmark_returns(
+                data, universe, dates, eligibility_column="selection_eligible"
+            )
+            daily["universe_benchmark_return"] = self._benchmark_returns(data, universe, dates)
+        else:
+            daily["benchmark_return"] = self._benchmark_returns(data, universe, dates)
         if market_benchmark is not None and not market_benchmark.empty:
             daily["market_index_return"] = self._market_index_returns(market_benchmark, dates)
         daily["excess_return"] = daily["return"] - daily["benchmark_return"]
         trades_frame = pd.DataFrame(trades)
         positions_frame = pd.DataFrame(positions)
         metrics = self._metrics(daily, trades_frame, generated, executed)
+        metrics["benchmark_scope"] = (
+            "condition_equal_weight" if selection_membership is not None else "universe_equal_weight"
+        )
         return BacktestResult(daily, trades_frame, positions_frame, metrics)
 
     @staticmethod
@@ -197,14 +230,26 @@ class BacktestEngine:
             "trade_date": date, "signal_date": position.signal_date, "sleeve_id": sleeve_id,
             "ts_code": position.ts_code, "side": side, "shares": position.shares,
             "raw_open": row.get("raw_open"), "gross_value": gross, "cost": cost,
+            "condition_quantile": position.condition_quantile,
         }
 
     @staticmethod
-    def _benchmark_returns(data: pd.DataFrame, universe: str, dates: list) -> list[float]:
-        ordered = data[["ts_code", "trade_date", "adj_open", f"is_{universe}"]].sort_values(["ts_code", "trade_date"])
+    def _benchmark_returns(
+        data: pd.DataFrame,
+        universe: str,
+        dates: list,
+        eligibility_column: str | None = None,
+    ) -> list[float]:
+        columns = ["ts_code", "trade_date", "adj_open", f"is_{universe}"]
+        if eligibility_column is not None:
+            columns.append(eligibility_column)
+        ordered = data[columns].sort_values(["ts_code", "trade_date"])
         grouped = ordered.groupby("ts_code")["adj_open"]
         ordered["tradable_forward_return"] = grouped.shift(-2) / grouped.shift(-1) - 1
-        means = ordered[ordered[f"is_{universe}"].fillna(False)].groupby("trade_date")["tradable_forward_return"].mean()
+        benchmark_mask = ordered[f"is_{universe}"].fillna(False).astype(bool)
+        if eligibility_column is not None:
+            benchmark_mask &= ordered[eligibility_column].fillna(False).astype(bool)
+        means = ordered[benchmark_mask].groupby("trade_date")["tradable_forward_return"].mean()
         # A universe known at T close enters T+1 open; its first return is visible at T+2 open.
         mapped = {dates[i + 2]: means.get(dates[i], 0.0) for i in range(len(dates) - 2)}
         return [float(mapped.get(date, 0.0) or 0.0) for date in dates]
@@ -243,6 +288,13 @@ class BacktestEngine:
             "execution_rate": float(buy_count / generated) if generated else 0.0,
             "turnover_notional": float(trades["gross_value"].sum()) if not trades.empty else 0.0,
         }
+        if "universe_benchmark_return" in daily:
+            universe_total = float((1 + daily["universe_benchmark_return"]).prod() - 1)
+            universe_annual = (
+                (1 + universe_total) ** (252 / count) - 1 if universe_total > -1 else -1.0
+            )
+            metrics["universe_benchmark_annualized_return"] = universe_annual
+            metrics["annualized_excess_return_vs_universe"] = float(annual - universe_annual)
         if "market_index_return" in daily:
             index_total = float((1 + daily["market_index_return"]).prod() - 1)
             metrics["market_index_annualized_return"] = (

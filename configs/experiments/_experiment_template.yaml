@@ -74,6 +74,23 @@ stage_l1:
   # 预测目标；stock_return=个股收益，stock_minus_sw_l1_return=个股相对申万一级行业收益。
   targets: [stock_return]
 
+  # 条件 IC：先按条件因子逐日切分样本，再在每组内计算主因子的 Rank IC。
+  conditional_ic:
+    # false 时不运行条件 IC，也不读取 conditioning_factor。
+    enabled: false
+
+    # main_factor=按主因子自身分组；也可填写另一份原子因子或因子组合 YAML 路径。
+    conditioning_factor: main_factor
+
+    # 条件因子的逐日分位数组数。
+    quantile_groups: 5
+
+    # 每个分位组每天至少需要的股票数；不足时跳过该组当日 IC。
+    min_group_size: 20
+
+    # 保存逐日、逐组 IC 明细到 l1_conditional_ic_daily.parquet。
+    store_daily_ic: true
+
 # L2：可交易组合回测网格及执行假设。
 stage_l2:
   # 运行回测的股票池；正式主回测通常使用 liquid。
@@ -108,6 +125,23 @@ stage_l2:
 
   # 买入失败后的处理；V1 固定为 keep_cash，不使用下一名股票替补。
   no_fill_policy: keep_cash
+
+  # 可选条件股票池：复用 L1 conditional_ic 的条件因子和每日分位定义。
+  condition_filter:
+    # true 时只有 include_quantiles 中的股票能进入 TopN 候选池。
+    enabled: false
+
+    # 固定复用 stage_l1.conditional_ic，避免 L1/L2 条件口径漂移。
+    source: stage_l1_conditional_ic
+
+    # 允许进入组合的条件分位；例如 [5] 表示偏离度最高20%。
+    include_quantiles: [5]
+
+    # 每日形成条件分位所需的最低条件因子有效股票数。
+    min_cross_section: 100
+
+    # 条件回测的主基准固定为入选条件股票池等权。
+    benchmark: condition_equal_weight
 
   # 开盘成交时执行的硬约束。
   execution_constraints:

@@ -53,3 +53,7 @@ factor-forge run --factor configs/combinations/short_term_alpha_combo_v1.yaml --
 ```
 
 Atomic factor YAML files remain valid with no `kind` field. Combination YAML files reference them by path; the platform computes or reuses their raw cache automatically.
+
+## Conditional IC
+
+L1 can split the cross-section by a conditioning factor and calculate the main factor's Rank IC inside each daily quantile. Enable `stage_l1.conditional_ic` and set `conditioning_factor` to `main_factor` or another factor YAML. See [conditional_ic_schema.md](conditional_ic_schema.md) for the configuration and artifact contract.

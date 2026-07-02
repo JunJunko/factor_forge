@@ -1,0 +1,43 @@
+version: 1
+kind: factor
+factor:
+  name: sell_impact_efficiency_v1
+  label: 卖盘冲击效率V1
+  description: >
+    使用日频可获得数据构造卖盘代理。先计算个股相对申万二级行业的单日收益，
+    再以“负收益日的换手率截面标准分 × 下跌幅度”表示卖压。
+    因子等于标准化卖压减去标准化行业相对收益；数值越高，表示卖压更强、
+    相对价格表现更弱，即卖盘转化为价格下跌的效率更高。
+  hypothesis: >
+    高卖盘冲击效率既可能表示信息型卖出并导致后续延续，也可能表示暂时性
+    流动性冲击并导致后续反转。先按偏离过去60日正常状态的程度分组，
+    再用条件IC检验不同异常程度下的预测方向。
+  direction: positive
+  expected_shape: unknown
+data:
+  frequency: daily
+  required_fields: [close, turnover_rate, industry_l2_code]
+  lookback_days: 1
+scope:
+  universe: default
+  cross_section: market
+  group_field: industry_l2_code
+  industry_standard: SW2021
+  industry_level: L2
+  point_in_time_required: true
+  min_group_size: 10
+calculation:
+  parameters: {}
+  features:
+    ret_1d: ret(close, 1)
+    industry_ret_1d: group_mean(ret_1d, by=industry_l2_code)
+    relative_ret_1d: ret_1d - industry_ret_1d
+    sell_pressure: where(ret_1d < 0, cs_zscore(turnover_rate) * abs(ret_1d), 0)
+  formula: cs_zscore(sell_pressure) - cs_zscore(relative_ret_1d)
+  missing_policy: skip
+  winsorize: mad
+  mad_scale: 5.0
+  standardize: zscore
+output:
+  value_field: factor_value
+
