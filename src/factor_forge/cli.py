@@ -17,9 +17,18 @@ app = typer.Typer(help="Reusable A-share daily factor research platform")
 data_app = typer.Typer(help="Build and inspect immutable local data versions")
 factor_app = typer.Typer(help="Validate declarative factor definitions")
 experiment_app = typer.Typer(help="Run staged factor experiments")
+ml_app = typer.Typer(help="Run cross-sectional LightGBM experiments")
 app.add_typer(data_app, name="data")
 app.add_typer(factor_app, name="factor")
 app.add_typer(experiment_app, name="experiment")
+app.add_typer(ml_app, name="ml")
+
+
+@ml_app.command("run")
+def ml_run(path: Path):
+    from factor_forge.ml import MLExperimentRunner
+    result = MLExperimentRunner().run(path)
+    typer.echo(json.dumps(result, ensure_ascii=False, indent=2, default=json_default))
 
 
 @data_app.command("init")

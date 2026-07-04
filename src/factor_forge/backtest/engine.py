@@ -101,20 +101,27 @@ class BacktestEngine:
                 sleeve_id = (date_index - 1) % holding_days
                 sleeve = sleeves[sleeve_id]
                 signal_date = dates[date_index - 1]
-                if not sleeve.positions:
+                # A single suspended/limit-down position must not freeze the
+                # whole sleeve. Reinvest whatever cash was released by the
+                # sell pass while carrying only the constrained positions.
+                if sleeve.cash > 0:
                     signals = by_date[signal_date]
                     universe_column = f"is_{universe}"
                     candidate_mask = (
                         signals[universe_column].fillna(False).astype(bool)
                         & signals["factor_value"].notna()
                     )
+                    held_codes = {position.ts_code for position in sleeve.positions}
+                    if held_codes:
+                        candidate_mask &= ~signals.index.isin(held_codes)
                     if selection_membership is not None:
                         candidate_mask &= signals["selection_eligible"]
                     candidates = signals[candidate_mask].sort_values(
                         ["factor_value"], ascending=False
                     ).head(top_n)
                     generated += len(candidates)
-                    target = sleeve.cash / top_n if top_n else 0.0
+                    deployable_cash = sleeve.cash
+                    target = deployable_cash / top_n if top_n else 0.0
                     for ts_code in candidates.index:
                         if not self._can_buy(today, ts_code, constraints):
                             continue

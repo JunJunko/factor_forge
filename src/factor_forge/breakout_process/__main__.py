@@ -4,13 +4,22 @@ import argparse
 import json
 
 from .research import BreakoutResearchRunner
+from .validation import FrozenBreakoutValidationRunner
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run frozen-box breakout conditional IC research")
-    parser.add_argument("config", help="Path to breakout research YAML")
+    parser.add_argument("config", help="Path to breakout YAML")
+    parser.add_argument(
+        "--mode", choices=("research", "validate"), default="research"
+    )
     arguments = parser.parse_args()
-    result = BreakoutResearchRunner().run(arguments.config)
+    runner = (
+        BreakoutResearchRunner()
+        if arguments.mode == "research"
+        else FrozenBreakoutValidationRunner()
+    )
+    result = runner.run(arguments.config)
     print(json.dumps(result, ensure_ascii=False, indent=2))
 
 

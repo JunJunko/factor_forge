@@ -1,0 +1,8 @@
+model_run: artifacts/qlib_breakout_runs/breakout_qlib_lightgbm_v1_20260704T074808Z
+project_config: configs/project.yaml
+top_n: [5, 10, 20]
+holding_days: 10
+initial_cash: 1000000
+lot_size: 100
+min_listing_days: 60
+cost_bps: 20

@@ -12,6 +12,22 @@ data/curated/
 data/versions/
 data/staging/
 artifacts/runs/
+# Generated research, backtest, and model outputs
+artifacts/
+
+# Local Factor Forge caches
+.factor_forge/
+
+# Common generated datasets and local model/database files
+*.parquet
+*.feather
+*.arrow
+*.pkl
+*.pickle
+*.npy
+*.npz
+*.db
+*.sqlite
 *.sqlite3
 *.log
 和GPT对话.txt

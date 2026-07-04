@@ -57,3 +57,19 @@ Atomic factor YAML files remain valid with no `kind` field. Combination YAML fil
 ## Conditional IC
 
 L1 can split the cross-section by a conditioning factor and calculate the main factor's Rank IC inside each daily quantile. Enable `stage_l1.conditional_ic` and set `conditioning_factor` to `main_factor` or another factor YAML. See [conditional_ic_schema.md](conditional_ic_schema.md) for the configuration and artifact contract.
+
+## Full-market LightGBM
+
+The ML runner consumes the same immutable point-in-time panel, builds Qlib-shaped
+features/labels, trains LightGBM on chronological segments, and sends test-period
+scores through the existing T+1 execution engine.
+
+```powershell
+python -m pip install -e ".[ml]"
+python -m factor_forge.cli ml run configs/ml/lightgbm_full_market_v1.yaml
+```
+
+Results are immutable directories under `artifacts/ml_runs/`, including the
+Qlib-compatible MultiIndex dataset, predictions, daily Rank IC, trades, NAV and
+summary metrics. Install `.[qlib]` only when native pyqlib APIs are needed; its
+Windows wheel availability depends on the local Python version.

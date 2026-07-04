@@ -1,0 +1,20 @@
+research_run: artifacts/breakout_runs/breakout_20260702T075822Z_def5a0da
+project_config: configs/project.yaml
+initial_cash: 1000000
+holding_days: 10
+top_n: [5, 10, 20]
+cost_scenarios_bps: [0, 10, 20]
+lot_size: 100
+min_listing_days: 60
+output_subdir: backtests_round2
+strategies:
+  - pair_all_breakouts
+  - pair_shallow_breakouts
+  - pair_exclude_top20_strength
+  - pair_middle60_strength
+  - pair_bottom20_strength
+  - all_breakouts_equal_weight
+  - shallow_breakouts_equal_weight
+  - exclude_top20_equal_weight
+  - middle60_equal_weight
+  - bottom20_equal_weight

@@ -1,0 +1,41 @@
+project_config: configs/project.yaml
+data_version: data_v1_20260701T095408Z_c7b9995d
+events_path: artifacts/breakout_runs/breakout_20260702T075822Z_def5a0da/events_with_scores.parquet
+sample_start_date: "2021-01-01"
+sample_end_date: "2026-06-30"
+output_root: artifacts/breakout_backtests
+
+formula:
+  id: orderly_approach_low_gap_preaccelerating_v1
+  event: frozen_box_close_breakout
+  universe: liquid
+  condition_column: pre_acceleration
+  condition_operator: greater_than
+  condition_threshold: 0.0
+  score_column: pair:approach_velocity+continuous_move
+  score_definition:
+    approach_velocity_rank: daily_percentile_rank_among_all_liquid_breakout_events
+    continuous_move: -abs(gap_atr)
+    continuous_move_rank: daily_percentile_rank_among_all_liquid_breakout_events
+    combination: equal_weight_mean
+  signal_time: close_t
+  entry_time: open_t1
+
+holding_periods: [10, 20]
+top_n: [10]
+cost_scenarios_bps: [0, 10, 20]
+initial_cash: 1000000
+lot_size: 100
+
+execution_constraints:
+  exclude_suspended: true
+  cannot_buy_limit_up: true
+  cannot_sell_limit_down: true
+  exclude_st: true
+  exclude_delisting_period: true
+  min_listing_days: 60
+
+cost_model:
+  commission_bps_per_side: 3
+  slippage_bps_per_side: 5
+  stamp_duty_bps_sell: 5

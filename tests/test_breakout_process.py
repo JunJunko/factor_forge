@@ -14,6 +14,10 @@ from factor_forge.breakout_process import (
     default_operator_registry,
 )
 from factor_forge.breakout_process.research import BreakoutResearchRunner
+from factor_forge.breakout_process.backtest import EventBacktestRunner
+from factor_forge.breakout_process.scenario_backtest import ScenarioBacktestRunner
+from factor_forge.breakout_process.strategy_backtest import FrozenBreakoutStrategyRunner
+from factor_forge.breakout_process.validation import exposure_residual, frozen_score
 
 
 def _config(**overrides) -> BreakoutConfig:
@@ -225,3 +229,117 @@ def test_research_runner_finds_a_stable_conditional_ic_in_synthetic_events():
     assert row.rank_ic_mean > 0.9
     assert row.promising
     assert daily.trade_date.nunique() == 50
+
+
+def test_event_backtest_uses_next_open_and_defers_limit_down_exit():
+    dates = list(pd.bdate_range("2024-01-02", periods=5))
+    frames = {}
+    for index, date in enumerate(dates):
+        frames[date] = pd.DataFrame(
+            {
+                "ts_code": ["A.SZ"],
+                "raw_open": [10.0 + index],
+                "adj_open": [10.0 + index],
+                "adj_close": [10.0 + index],
+                "is_suspended": [False],
+                "is_limit_up_open": [False],
+                "is_limit_down_open": [index == 2],
+                "is_st": [False],
+                "is_delisting_period": [False],
+                "listing_trade_days": [100],
+            }
+        ).set_index("ts_code")
+    daily, trades, _ = EventBacktestRunner()._simulate(
+        dates,
+        frames,
+        {dates[0]: ["A.SZ"]},
+        holding_days=1,
+        initial_cash=100_000,
+        lot_size=100,
+        min_listing_days=60,
+        cost_bps=0,
+        allocation_count=1,
+    )
+
+    buy = trades.loc[trades.side == "BUY"].iloc[0]
+    sell = trades.loc[trades.side == "SELL"].iloc[0]
+    assert buy.trade_date == dates[1]
+    assert sell.trade_date == dates[3]
+    assert daily.iloc[-1].nav > 100_000
+
+
+def test_scenario_condition_deduplication_preserves_aliases():
+    candidates = pd.DataFrame(
+        {
+            "score": ["A", "A", "B"],
+            "condition": ["all", "contracting", "other"],
+            "horizon": [10, 10, 10],
+            "exploratory_score": [3.0, 2.0, 1.0],
+        }
+    )
+    conditions = {
+        "all": pd.Series([True, True, False]),
+        "contracting": pd.Series([True, True, False]),
+        "other": pd.Series([False, True, False]),
+    }
+    result, masks = ScenarioBacktestRunner._deduplicate_conditions(candidates, conditions)
+
+    assert len(result) == 2
+    first = result.loc[result.score == "A"].iloc[0]
+    assert first.canonical_condition == "all"
+    assert first.condition_aliases == "all+contracting"
+    assert set(masks) == {"all", "other"}
+
+
+def test_sma_signal_filter_uses_only_information_available_at_signal_close():
+    dates = pd.bdate_range("2024-01-02", periods=6)
+    panel = pd.DataFrame(
+        {
+            "trade_date": dates,
+            "ts_code": "000001.SZ",
+            "adj_close": [10.0, 10.0, 10.0, 9.0, 11.0, 1.0],
+        }
+    )
+    signals = pd.DataFrame(
+        {
+            "trade_date": [dates[3], dates[4]],
+            "ts_code": "000001.SZ",
+            "factor_value": [1.0, 2.0],
+        }
+    )
+    result = FrozenBreakoutStrategyRunner._apply_signal_filter(
+        signals, panel, {"type": "close_above_sma", "window": 3}
+    )
+
+    assert result.trade_date.tolist() == [dates[4]]
+
+
+def test_frozen_score_is_exact_equal_weight_daily_rank_formula():
+    frame = pd.DataFrame(
+        {
+            "trade_date": [pd.Timestamp("2025-01-02")] * 3,
+            "approach_velocity": [1.0, 2.0, 3.0],
+            "gap_atr": [0.3, 0.2, 0.1],
+        }
+    )
+    actual = frozen_score(frame)
+    expected = pd.Series([1 / 3, 2 / 3, 1.0])
+    pd.testing.assert_series_equal(actual.reset_index(drop=True), expected)
+
+
+def test_exposure_residual_removes_daily_size_and_industry_linear_exposure():
+    rows = []
+    for index in range(20):
+        industry = "A" if index < 10 else "B"
+        size = float(index)
+        rows.append(
+            {
+                "trade_date": pd.Timestamp("2025-01-02"),
+                "industry_l2_code": industry,
+                "log_total_mv": size,
+                "value": 2.0 * size + (5.0 if industry == "B" else 0.0),
+            }
+        )
+    frame = pd.DataFrame(rows)
+    residual = exposure_residual(frame, "value")
+    assert residual.abs().max() < 1e-10

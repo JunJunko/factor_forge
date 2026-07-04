@@ -1,0 +1,27 @@
+version: 1
+name: breakout_qlib_lightgbm_v1
+research_run: artifacts/breakout_runs/breakout_20260702T075822Z_def5a0da
+horizon: 10
+round_trip_cost_bps: 20
+segments:
+  train: {start: "2021-01-01", end: "2023-12-31"}
+  valid: {start: "2024-01-01", end: "2024-12-31"}
+  test: {start: "2025-01-01", end: "2026-06-30"}
+targets: [absolute, event_excess, cost_positive]
+add_daily_rank_features: true
+top_n: [5, 10, 20]
+model:
+  learning_rate: 0.03
+  num_leaves: 31
+  max_depth: -1
+  num_boost_round: 800
+  early_stopping_rounds: 60
+  min_data_in_leaf: 80
+  feature_fraction: 0.8
+  bagging_fraction: 0.8
+  bagging_freq: 1
+  lambda_l1: 0.1
+  lambda_l2: 1.0
+  num_threads: -1
+  seed: 42
+output_root: artifacts/qlib_breakout_runs

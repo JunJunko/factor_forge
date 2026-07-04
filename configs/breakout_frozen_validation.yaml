@@ -1,0 +1,10 @@
+project_config: configs/project.yaml
+data_version: data_v1_20260701T095408Z_c7b9995d
+source_run: artifacts/breakout_runs/breakout_20260702T075822Z_def5a0da
+output_root: artifacts/breakout_validations
+first_test_year: 2022
+horizons: [10, 20]
+min_cross_section: 8
+backtest_top_n: 10
+initial_cash: 1000000
+lot_size: 100

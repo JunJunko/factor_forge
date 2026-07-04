@@ -1,0 +1,37 @@
+version: 1
+name: lightgbm_full_market_v1
+project_config: configs/project.yaml
+data_version: latest
+require_full_segment_coverage: true
+segments:
+  train: {start: "2016-01-01", end: "2022-12-31"}
+  valid: {start: "2023-01-01", end: "2023-12-31"}
+  test: {start: "2024-01-01", end: "2026-06-30"}
+features:
+  windows: [5, 10, 20, 60]
+  winsor_quantile: 0.01
+  cross_sectional_zscore: true
+label:
+  horizon: 5
+  price: adj_open
+  excess_over_universe: true
+model:
+  objective: regression
+  learning_rate: 0.03
+  num_leaves: 31
+  max_depth: -1
+  n_estimators: 500
+  subsample: 0.8
+  colsample_bytree: 0.8
+  reg_alpha: 0.1
+  reg_lambda: 0.1
+  random_state: 42
+  n_jobs: -1
+portfolio:
+  universe: liquid
+  top_n: 50
+  holding_days: 5
+  initial_cash: 10000000
+  lot_size: 100
+  cost_bps: 15
+output_root: artifacts/ml_runs

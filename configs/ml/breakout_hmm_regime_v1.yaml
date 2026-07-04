@@ -1,0 +1,18 @@
+name: breakout_hmm_regime_v1
+model_run: artifacts/qlib_breakout_walkforward/breakout_qlib_walkforward_v1_20260704T075911Z
+project_config: configs/project.yaml
+states: 3
+history_days: 756
+refit_frequency: QE
+random_restarts: 4
+max_iterations: 300
+utility_shrink_events: 100
+horizon: 10
+cost_bps: 20
+scores: [prediction_blend, prediction_cost_positive]
+top_n: [5, 10]
+holding_days: 10
+initial_cash: 1000000
+lot_size: 100
+min_listing_days: 60
+output_root: artifacts/hmm_regime_runs

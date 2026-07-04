@@ -1,0 +1,19 @@
+research_run: artifacts/breakout_runs/breakout_20260702T075822Z_def5a0da
+project_config: configs/project.yaml
+initial_cash: 1000000
+holding_days: 10
+top_n: [5, 10]
+cost_scenarios_bps: [0, 10, 20]
+lot_size: 100
+min_listing_days: 60
+output_subdir: backtests_round3_10d
+strategies:
+  - heat_adjusted_all
+  - heat_adjusted_market_up
+  - base_market_up
+  - heat_adjusted_market_low_vol
+  - heat_adjusted_low_heat_market_up
+  - all_breakouts_equal_weight
+  - market_up_equal_weight
+  - market_low_vol_equal_weight
+  - low_heat_market_up_equal_weight
