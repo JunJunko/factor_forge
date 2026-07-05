@@ -57,6 +57,28 @@ def test_limit_down_sell_is_deferred():
     assert first_sell.trade_date == pd.Timestamp("2024-01-05")
 
 
+def test_position_multiplier_only_scales_new_entries():
+    panel = one_stock_panel([10.0, 10.0, 10.0, 10.0])
+    factor = panel[["trade_date", "ts_code"]].copy()
+    factor["factor_value"] = 1.0
+    multiplier = pd.Series(
+        [0.5, 0.0, 0.0, 0.0], index=pd.to_datetime(panel["trade_date"].unique())
+    )
+    result = BacktestEngine().run(
+        panel, factor, universe="liquid", top_n=1, holding_days=2,
+        initial_cash=100_000, lot_size=100,
+        constraints=ExecutionConstraints(min_listing_days=60),
+        cost_model=CostModel(commission_bps_per_side=0, slippage_bps_per_side=0,
+                             stamp_duty_bps_sell=0),
+        cost_scenario_bps=0, position_multiplier=multiplier,
+    )
+    buys = result.trades[result.trades.side == "BUY"]
+    assert len(buys) == 1
+    assert buys.iloc[0]["gross_value"] == pytest.approx(25_000)
+    assert result.daily.loc[result.daily.trade_date == pd.Timestamp("2024-01-04"),
+                            "gross_exposure"].iloc[0] == pytest.approx(25_000)
+
+
 def test_condition_membership_filters_selection_and_becomes_primary_benchmark():
     dates = pd.bdate_range("2024-01-02", periods=4)
     rows = []

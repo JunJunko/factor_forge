@@ -1,0 +1,4 @@
+version: 1
+name: full_top5_hold10_fixed_validation_v1
+experiment_config: configs/ml/value_regression_lightgbm_v1.yaml
+output_root: artifacts/value_fixed_validations

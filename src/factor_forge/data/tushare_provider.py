@@ -12,6 +12,7 @@ from dotenv import load_dotenv
 ENDPOINTS = [
     "stock_basic", "trade_cal", "daily", "adj_factor", "daily_basic", "stk_limit",
     "suspend_d", "stock_st", "index_classify", "index_member_all", "index_daily",
+    "income_vip", "balancesheet_vip",
 ]
 
 
@@ -50,6 +51,8 @@ class TushareProvider:
             "index_classify": {"level": "L1", "src": "SW2021"},
             "index_member_all": {"l1_code": "801010.SI"},
             "index_daily": {"ts_code": "000852.SH", "start_date": sample_date, "end_date": sample_date},
+            "income_vip": {"period": "20241231", "fields": "ts_code,ann_date,end_date,total_revenue"},
+            "balancesheet_vip": {"period": "20241231", "fields": "ts_code,ann_date,end_date,total_assets"},
         }
         checked = datetime.now(timezone.utc).isoformat()
         report = []

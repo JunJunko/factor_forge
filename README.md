@@ -69,6 +69,27 @@ python -m pip install -e ".[ml]"
 python -m factor_forge.cli ml run configs/ml/lightgbm_full_market_v1.yaml
 ```
 
+## 20日内价值修复 LightGBM
+
+八因子价值修复管线分别训练未来 5、10、20 日开盘到开盘超额收益，并在训练/验证
+边界按标签期限执行 purge：
+
+```powershell
+python -m factor_forge.cli ml value-run configs/ml/value_regression_lightgbm_v1.yaml
+```
+
+该管线需要按 `available_date` 生效的 PIT 财务快照。字段契约、八个特征定义和输出
+说明见 [value_regression_schema.md](value_regression_schema.md)。
+
+使用 Tushare VIP 利润表和资产负债表构建该快照：
+
+```powershell
+python -m factor_forge.cli data ingest-fundamentals --start-year 2014
+```
+
+命令按季度分页、缓存原始分区，并将公告映射到其后的首个交易日；最近两个报告期
+每次运行都会刷新，以接收新增披露和财报修订。
+
 Results are immutable directories under `artifacts/ml_runs/`, including the
 Qlib-compatible MultiIndex dataset, predictions, daily Rank IC, trades, NAV and
 summary metrics. Install `.[qlib]` only when native pyqlib APIs are needed; its

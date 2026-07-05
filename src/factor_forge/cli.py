@@ -3,11 +3,13 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pandas as pd
 import typer
 
 from factor_forge.config import load_factor, load_project
 from factor_forge.data.ingestion import TushareIngestor
 from factor_forge.data.metadata import MetadataStore
+from factor_forge.data.repository import DataVersionRepository
 from factor_forge.data.tushare_provider import TushareProvider
 from factor_forge.experiments import ExperimentRunner
 from factor_forge.experiments.artifacts import json_default
@@ -28,6 +30,38 @@ app.add_typer(ml_app, name="ml")
 def ml_run(path: Path):
     from factor_forge.ml import MLExperimentRunner
     result = MLExperimentRunner().run(path)
+    typer.echo(json.dumps(result, ensure_ascii=False, indent=2, default=json_default))
+
+
+@ml_app.command("value-run")
+def value_ml_run(path: Path):
+    """Train the point-in-time 5/10/20-day value-recovery ensemble."""
+    from factor_forge.ml.value_regression import ValueRegressionRunner
+    result = ValueRegressionRunner().run(path)
+    typer.echo(json.dumps(result, ensure_ascii=False, indent=2, default=json_default))
+
+
+@ml_app.command("value-diagnostics")
+def value_diagnostics(path: Path):
+    """Run portfolio, decile and price-vs-full diagnostics for a value model."""
+    from factor_forge.ml.value_diagnostics import ValueDiagnosticsRunner
+    result = ValueDiagnosticsRunner().run(path)
+    typer.echo(json.dumps(result, ensure_ascii=False, indent=2, default=json_default))
+
+
+@ml_app.command("value-fixed-validation")
+def value_fixed_validation(path: Path):
+    """Run the frozen full-model Top5/10-day validation protocol."""
+    from factor_forge.ml.fixed_validation import FixedValidationRunner
+    result = FixedValidationRunner().run(path)
+    typer.echo(json.dumps(result, ensure_ascii=False, indent=2, default=json_default))
+
+
+@ml_app.command("value-hmm-regime")
+def value_hmm_regime(path: Path):
+    """Validate leakage-safe HMM market regimes on the frozen value model."""
+    from factor_forge.ml.value_hmm_regime import ValueHMMRegimeRunner
+    result = ValueHMMRegimeRunner().run(path)
     typer.echo(json.dumps(result, ensure_ascii=False, indent=2, default=json_default))
 
 
@@ -57,6 +91,41 @@ def ingest(
 
     version = TushareIngestor(project, TushareProvider(), progress=progress).ingest(start, end)
     typer.echo(version)
+
+
+@data_app.command("ingest-fundamentals")
+def ingest_fundamentals(
+    config: Path = typer.Option(Path("configs/project.yaml")),
+    data_version: str = typer.Option("latest"),
+    start_year: int = typer.Option(2014),
+    output: Path = typer.Option(Path("data/fundamentals_pit.parquet")),
+):
+    """Fetch Tushare financial statements and build conservative PIT snapshots."""
+    from factor_forge.data.fundamentals import TushareFundamentalIngestor
+
+    project = load_project(config)
+    repository = DataVersionRepository(project.paths.data_root, project.paths.metadata_db)
+    version, manifest = repository.load_manifest(data_version)
+    calendar = repository.load_raw_dataset(version, "trade_calendar")
+    securities = repository.load_raw_dataset(version, "stock_basic")
+    if calendar is None or securities is None:
+        raise typer.BadParameter("data version has no trade_calendar or stock_basic raw dataset")
+    open_dates = calendar.loc[pd.to_numeric(calendar["is_open"], errors="coerce").eq(1), "cal_date"]
+    codes = set(securities["ts_code"].dropna().astype(str))
+
+    def progress(done: int, total: int, endpoint: str, period: str, rows: int) -> None:
+        typer.echo(f"fundamentals {done}/{total} {endpoint} period={period} rows={rows}")
+
+    result = TushareFundamentalIngestor(
+        TushareProvider(), project.paths.data_root, progress=progress
+    ).ingest(
+        start_year=start_year,
+        end_date=manifest["end_date"],
+        trading_dates=open_dates,
+        securities=codes,
+        output_path=output,
+    )
+    typer.echo(json.dumps(result.__dict__, ensure_ascii=False, indent=2, default=json_default))
 
 
 @factor_app.command("validate")

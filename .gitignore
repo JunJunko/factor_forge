@@ -11,6 +11,7 @@ data/raw/
 data/curated/
 data/versions/
 data/staging/
+data/*.quality.json
 artifacts/runs/
 # Generated research, backtest, and model outputs
 artifacts/

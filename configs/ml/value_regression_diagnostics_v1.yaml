@@ -1,0 +1,8 @@
+version: 1
+name: value_regression_diagnostics_v1
+experiment_config: configs/ml/value_regression_lightgbm_v1.yaml
+full_run_dir: artifacts/value_regression_runs/value_regression_lightgbm_v1_20260704T124328Z_74951fe9
+top_n: [5, 10, 20]
+holding_days: [5, 10, 20]
+deciles: 10
+output_root: artifacts/value_regression_diagnostics

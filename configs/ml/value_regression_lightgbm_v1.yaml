@@ -1,0 +1,66 @@
+version: 1
+name: value_regression_lightgbm_v1
+project_config: configs/project.yaml
+data_version: latest
+
+# Parquet contract: ts_code, available_date and the seven fields consumed below.
+# available_date must be the first trading session on which the snapshot was knowable.
+fundamentals_path: data/fundamentals_pit.parquet
+require_full_segment_coverage: true
+
+segments:
+  train: {start: "2016-01-01", end: "2022-12-31"}
+  valid: {start: "2023-01-01", end: "2023-12-31"}
+  test: {start: "2024-01-01", end: "2026-06-30"}
+
+features:
+  fundamental_revision_window: 20
+  momentum_formation: 100
+  momentum_skip: 20
+  pullback_window: 15
+  pullback_skip: 5
+  confirmation_window: 5
+  liquidity_baseline: 20
+  delay_window: 120
+  delay_lags: 5
+  delay_change: 20
+  ridge_alpha: 5.0
+  min_industry_size: 20
+  mad_scale: 5.0
+  minimum_non_null_features: 5
+
+labels:
+  horizons: [5, 10, 20]
+  excess_over_universe: true
+  blend_weights: {5: 0.2, 10: 0.3, 20: 0.5}
+
+independence:
+  enforce: true
+  max_median_abs_spearman: 0.15
+  max_p90_abs_spearman: 0.35
+
+model:
+  objective: regression_l1
+  learning_rate: 0.03
+  num_leaves: 15
+  max_depth: 5
+  n_estimators: 1200
+  min_child_samples: 500
+  subsample: 0.8
+  subsample_freq: 1
+  colsample_bytree: 0.8
+  reg_alpha: 0.2
+  reg_lambda: 1.0
+  random_state: 42
+  n_jobs: -1
+  early_stopping_rounds: 100
+
+portfolio:
+  universe: liquid
+  top_n: 50
+  holding_days: 20
+  initial_cash: 10000000
+  lot_size: 100
+  cost_bps: 15
+
+output_root: artifacts/value_regression_runs

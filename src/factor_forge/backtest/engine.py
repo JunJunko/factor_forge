@@ -53,6 +53,7 @@ class BacktestEngine:
         cost_scenario_bps: float | None = None,
         market_benchmark: pd.DataFrame | None = None,
         selection_membership: pd.DataFrame | None = None,
+        position_multiplier: pd.Series | dict[pd.Timestamp, float] | None = None,
     ) -> BacktestResult:
         data = panel.merge(
             factor_values[["trade_date", "ts_code", "factor_value"]],
@@ -84,6 +85,8 @@ class BacktestEngine:
         generated = executed = 0
         for date_index, date in enumerate(dates):
             today = by_date[date]
+            generated_today = buys_today = sells_today = duplicate_signals_today = 0
+            turnover_today = cost_today = 0.0
             # Due sells happen before a sleeve is considered for its next batch.
             for sleeve_id, sleeve in enumerate(sleeves):
                 remaining = []
@@ -95,6 +98,9 @@ class BacktestEngine:
                     sell_cost = self._cost(value, "SELL", cost_model, cost_scenario_bps)
                     sleeve.cash += value - sell_cost
                     executed += 1
+                    sells_today += 1
+                    turnover_today += value
+                    cost_today += sell_cost
                     trades.append(self._trade_row(position, date, sleeve_id, "SELL", value, sell_cost, today))
                 sleeve.positions = remaining
             if date_index >= 1:
@@ -120,7 +126,21 @@ class BacktestEngine:
                         ["factor_value"], ascending=False
                     ).head(top_n)
                     generated += len(candidates)
-                    deployable_cash = sleeve.cash
+                    generated_today += len(candidates)
+                    globally_held = {
+                        position.ts_code
+                        for existing_sleeve in sleeves
+                        for position in existing_sleeve.positions
+                    }
+                    duplicate_signals_today += int(candidates.index.isin(globally_held).sum())
+                    multiplier = 1.0
+                    if position_multiplier is not None:
+                        if isinstance(position_multiplier, pd.Series):
+                            multiplier = float(position_multiplier.get(signal_date, 1.0))
+                        else:
+                            multiplier = float(position_multiplier.get(signal_date, 1.0))
+                        multiplier = float(np.clip(multiplier, 0.0, 1.0))
+                    deployable_cash = sleeve.cash * multiplier
                     target = deployable_cash / top_n if top_n else 0.0
                     for ts_code in candidates.index:
                         if not self._can_buy(today, ts_code, constraints):
@@ -146,20 +166,58 @@ class BacktestEngine:
                         )
                         sleeve.positions.append(position)
                         executed += 1
+                        buys_today += 1
+                        turnover_today += gross
+                        cost_today += buy_cost
                         trades.append(self._trade_row(position, date, sleeve_id, "BUY", gross, buy_cost, today))
             nav = 0.0
             gross_exposure = 0.0
+            cash_total = 0.0
+            position_values: list[tuple[str, float]] = []
             for sleeve_id, sleeve in enumerate(sleeves):
                 nav += sleeve.cash
+                cash_total += sleeve.cash
                 for position in sleeve.positions:
                     value = self._position_value(position, date, mark_prices)
                     nav += value
                     gross_exposure += value
+                    position_values.append((position.ts_code, value))
                     positions.append({
                         "trade_date": date, "sleeve_id": sleeve_id, "ts_code": position.ts_code,
                         "shares": position.shares, "market_value": value, "due_date": position.due_date,
                     })
-            daily_rows.append({"trade_date": date, "nav": nav, "gross_exposure": gross_exposure})
+            unique_codes = {code for code, _ in position_values}
+            aggregate_values: dict[str, float] = {}
+            for code, value in position_values:
+                aggregate_values[code] = aggregate_values.get(code, 0.0) + value
+            industry_codes = set()
+            if "industry_l1_code" in today.columns:
+                for code in unique_codes:
+                    if code in today.index:
+                        item = today.loc[code]
+                        if isinstance(item, pd.DataFrame):
+                            item = item.iloc[0]
+                        industry = item.get("industry_l1_code")
+                        if pd.notna(industry):
+                            industry_codes.add(industry)
+            previous_nav = daily_rows[-1]["nav"] if daily_rows else initial_cash
+            daily_rows.append({
+                "trade_date": date, "nav": nav, "gross_exposure": gross_exposure,
+                "cash": cash_total,
+                "new_signals": generated_today,
+                "duplicate_signals": duplicate_signals_today,
+                "executed_buys": buys_today,
+                "executed_sells": sells_today,
+                "holding_count": len(position_values),
+                "unique_holding_count": len(unique_codes),
+                "portfolio_turnover": turnover_today / previous_nav if previous_nav > 0 else 0.0,
+                "cash_ratio": cash_total / nav if nav > 0 else 0.0,
+                "industry_count": len(industry_codes),
+                "largest_position_weight": (
+                    max(aggregate_values.values()) / nav if aggregate_values and nav > 0 else 0.0
+                ),
+                "transaction_cost": cost_today,
+            })
         daily = pd.DataFrame(daily_rows)
         daily["return"] = daily["nav"].pct_change().fillna(0.0)
         if selection_membership is not None:
@@ -235,6 +293,7 @@ class BacktestEngine:
         if isinstance(row, pd.DataFrame): row = row.iloc[0]
         return {
             "trade_date": date, "signal_date": position.signal_date, "sleeve_id": sleeve_id,
+            "entry_date": position.entry_date, "due_date": position.due_date,
             "ts_code": position.ts_code, "side": side, "shares": position.shares,
             "raw_open": row.get("raw_open"), "gross_value": gross, "cost": cost,
             "condition_quantile": position.condition_quantile,

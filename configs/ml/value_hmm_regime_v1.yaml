@@ -1,0 +1,25 @@
+version: 1
+name: value_hmm_regime_v1
+experiment_config: configs/ml/value_regression_lightgbm_v1.yaml
+frozen_model_run: artifacts/value_fixed_validations/full_top5_hold10_fixed_validation_v1_20260704T150031Z_afee1542
+data_version: data_v1_20260704T074315Z_88d001e2
+output_root: artifacts/value_hmm_regime_validations
+
+hmm:
+  n_components: 3
+  covariance_type: diag
+  history_days: 756
+  zscore_window: 756
+  zscore_min_periods: 60
+  refit_frequency: monthly
+  seeds: [11, 23, 37, 53, 71]
+  max_iterations: 300
+  tolerance: 0.0001
+  min_covar: 0.0001
+
+portfolio:
+  top_n: 5
+  holding_days: 10
+  roundtrip_cost_bps: 15
+  probability_weights: [1.0, 0.6, 0.2]
+  probability_smoothing_days: 3
