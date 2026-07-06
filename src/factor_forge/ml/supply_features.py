@@ -503,3 +503,92 @@ def liquidity_weight(log_avg_amount: pd.Series, a_low: float, a_full: float) -> 
 def sample_weight(price_weight_series: pd.Series, liquidity_weight_series: pd.Series) -> pd.Series:
     """``clip(price_weight * liquidity_weight, 0.1, 1)``."""
     return (price_weight_series * liquidity_weight_series).clip(0.1, 1.0)
+
+
+# --------------------------------------------------------------------------- #
+# V2: stable turnover baseline + recent no-volume rise (handoff doc sec. 3).
+# Baseline window = t-29..t-2 (``baseline_window`` bars), event window = t-1..t
+# (``event_window`` bars).  The event days NEVER enter the baseline mean/std
+# (handoff 4.1.3.3).  These return raw per-stock values; the daily cross-section
+# percentile rank, std_floor, winsor and zscore are applied at the dataset layer.
+# --------------------------------------------------------------------------- #
+def baseline_window_stat(
+    value: pd.Series,
+    stocks: pd.Series,
+    baseline_window: int,
+    event_window: int,
+    *,
+    method: str = "mean",
+    ddof: int = 0,
+) -> pd.Series:
+    """Rolling stat over the baseline window ``[t - bw - ew + 1, t - ew]``.
+
+    For ``baseline_window=28, event_window=2`` the window at bar ``t`` is ``t-29..t-2``
+    (28 bars), leaving ``t-1, t`` out of the baseline.  Implemented as
+    ``rolling(baseline_window)`` on the series shifted by ``event_window``.  ``ddof=0``
+    for std matches the project ``ts_std`` population-std convention.
+    """
+    min_periods = max(2, int(round(baseline_window * 0.75)))
+    return _rolling(
+        value, stocks, baseline_window, method=method, min_periods=min_periods,
+        ddof=ddof, shift=event_window,
+    )
+
+
+def volatility_prior(
+    log_return: pd.Series, stocks: pd.Series, window: int, gap: int, ddof: int = 1
+) -> pd.Series:
+    """Volatility whose window ends ``gap`` bars before the current bar.
+
+    ``price_strength_2`` divides by ``volatility_20`` measured up to ``t-2`` so the last
+    two event-day returns do not contaminate the volatility baseline (handoff 3.6).
+    """
+    min_periods = max(2, int(round(window * 0.75)))
+    return _rolling(log_return, stocks, window, method="std", min_periods=min_periods, ddof=ddof, shift=gap)
+
+
+def price_strength_2(excess_ret_2: pd.Series, volatility_prior_20: pd.Series) -> pd.Series:
+    """``excess_ret_2 / (vol20_[..t-2] * sqrt(2) + eps)`` (handoff 3.6)."""
+    return excess_ret_2 / (volatility_prior_20 * np.sqrt(2.0) + EPS)
+
+
+def recent_volume_z(
+    log_turnover: pd.Series,
+    baseline_mean: pd.Series,
+    baseline_std: pd.Series,
+    std_floor: pd.Series,
+    stocks: pd.Series,
+) -> tuple[pd.Series, pd.Series]:
+    """Raw z of the last two event-day log turnovers vs the baseline mean/std.
+
+    ``z[t-1], z[t] = (x - baseline_mean_28) / max(baseline_std_28, std_floor)`` (handoff 3.7).
+    ``std_floor`` is the daily cross-section floor (computed at the dataset layer) that
+    prevents division by ~0 when a stock's 28-day turnover is near-constant.  Returns
+    ``(z_t1_raw, z_t_raw)``; clipping is the caller's job (handoff 3.8 keeps raw + clip).
+    """
+    denom_arr = np.maximum(baseline_std.to_numpy(), std_floor.to_numpy())
+    denom = pd.Series(denom_arr, index=baseline_std.index).replace(0.0, np.nan)
+    x_prev = log_turnover.groupby(stocks, sort=False).shift(1)
+    z_t1 = (x_prev - baseline_mean) / denom
+    z_t = (log_turnover - baseline_mean) / denom
+    return z_t1, z_t
+
+
+def recent_volume_z_aggregates(
+    z_t1_raw: pd.Series, z_t_raw: pd.Series, clip_lower: float, clip_upper: float
+) -> dict[str, pd.Series]:
+    """Build ``mean_2`` / ``max_2`` in raw and clipped form (handoff 3.7/3.8).
+
+    ``max_2`` takes priority over ``mean_2`` in the thesis (handoff 3.7/5.5): a single
+    heavy-activation day should not be masked by averaging it with a quiet day.
+    """
+    mean_2_raw = (z_t1_raw + z_t_raw) / 2.0
+    max_2_raw = pd.Series(
+        np.maximum(z_t1_raw.to_numpy(), z_t_raw.to_numpy()), index=z_t1_raw.index
+    )
+    return {
+        "recent_volume_z_mean_2_raw": mean_2_raw,
+        "recent_volume_z_mean_2_clip": mean_2_raw.clip(clip_lower, clip_upper),
+        "recent_volume_z_max_2_raw": max_2_raw,
+        "recent_volume_z_max_2_clip": max_2_raw.clip(clip_lower, clip_upper),
+    }

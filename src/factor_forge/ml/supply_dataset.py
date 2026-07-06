@@ -68,7 +68,36 @@ FEATURE_GROUP_REGISTRY: dict[str, list[str]] = {
         "persistent_scarcity_factor",
         "price_adjusted_scarcity_factor",
     ],
+    # V2: stable turnover baseline + recent no-volume rise (handoff doc sec. 3 / 6.4).
+    # The three independent legs -- baseline stability, 2-day price strength, and the
+    # un-activated-volume z -- live here RAW and separate; the dataset never collapses
+    # them into a single composite (handoff 3.1 / 4.2.3).  The manual composites
+    # (no_volume_activation_score, stable_no_volume_rise) are deferred to task 9 and only
+    # built after the raw legs pass the univariate / conditional checks.
+    "baseline_structure": [
+        "baseline_turnover_mean_28",
+        "baseline_turnover_std_28",
+        "baseline_amount_mean_28",
+        "turnover_vol_rank_28",
+        "turnover_stability_28",
+        "excess_ret_2",
+        "price_strength_2",
+        "recent_volume_z_t1_raw",
+        "recent_volume_z_t_raw",
+        "recent_volume_z_mean_2_raw",
+        "recent_volume_z_mean_2_clip",
+        "recent_volume_z_max_2_raw",
+        "recent_volume_z_max_2_clip",
+        "effective_ticks_2",
+    ],
 }
+
+
+# V2 daily cross-section percentile-rank features in [0, 1]; they bypass the winsor+zscore
+# pass so their interpretability is preserved (handoff doc 3.5).  Other V2 fields (baseline
+# levels, the z family, price_strength_2, effective_ticks_2) go through the same per-day
+# winsor + cross-sectional zscore as the V1 features.
+CROSS_SECTION_RANK_FEATURES = frozenset({"turnover_vol_rank_28", "turnover_stability_28"})
 
 
 REQUIRED_PANEL_COLUMNS = {
@@ -218,6 +247,42 @@ def build_supply_dataset(
     mkt_breadth = sf.market_breadth(log_return, dates, valid_mask)
     ind_breadth = sf.industry_breadth(log_return, dates, industries, valid_mask)
 
+    # --- V2: stable turnover baseline + recent no-volume rise (handoff doc sec. 3) ---
+    bw, ew = features.baseline_window, features.event_window
+    lt = sf._log_turnover(data["turnover_rate"])
+    baseline_t_mean = sf.baseline_window_stat(lt, stocks, bw, ew, method="mean")
+    baseline_t_std = sf.baseline_window_stat(lt, stocks, bw, ew, method="std", ddof=0)
+    baseline_amt_mean = sf.baseline_window_stat(
+        data["amount_cny"].where(data["amount_cny"] > 0), stocks, bw, ew, method="mean"
+    )
+    # Volatility ending at t-2 so the last two event-day returns do not pollute it (handoff 3.6).
+    vol20_prior = sf.volatility_prior(
+        log_return, stocks, features.volatility_window, ew, ddof=features.volatility_ddof
+    )
+    excess_2 = sf.excess_returns(adj_close, stocks, dates, industries, windows=[ew])[ew]
+    price_str_2 = sf.price_strength_2(excess_2, vol20_prior)
+    eff_ticks_2 = sf.effective_ticks(data["raw_close"], stocks, ew, features.tick_size)
+    # std_floor: daily cross-section quantile of the baseline std, valid stocks only
+    # (handoff 3.7 method 1; train_period_fixed is a phase-2 option, not yet wired).
+    if features.std_floor_method == "cross_section_quantile":
+        std_floor = (
+            baseline_t_std.where(valid_mask)
+            .groupby(dates, sort=False)
+            .transform(lambda s: s.quantile(features.std_floor_quantile))
+        )
+    else:
+        raise NotImplementedError(
+            f"std_floor_method={features.std_floor_method!r} not implemented in phase 1"
+        )
+    z_t1_raw, z_t_raw = sf.recent_volume_z(lt, baseline_t_mean, baseline_t_std, std_floor, stocks)
+    z_agg = sf.recent_volume_z_aggregates(
+        z_t1_raw, z_t_raw, features.z_clip_lower, features.z_clip_upper
+    )
+    # Daily cross-section percentile rank of the baseline std (valid stocks only); kept in
+    # [0,1] and exempted from the winsor+zscore pass below (handoff 3.5).
+    turnover_vol_rank_28 = baseline_t_std.where(valid_mask).groupby(dates, sort=False).rank(pct=True)
+    turnover_stability_28 = 1.0 - turnover_vol_rank_28
+
     # --- assemble ---
     excess_ret_5_raw = excess.get(5, excess[features.excess_return_windows[0]])
     rar5 = sf.risk_adjusted_ret_5(excess_ret_5_raw, vol20)
@@ -252,6 +317,21 @@ def build_supply_dataset(
         "scarcity_days_ratio_5": scar_days,
         "scarcity_slope_5": scar_slope,
         "up_days_ratio_5": up_days,
+        # V2 baseline_structure (handoff doc sec. 3 / 6.4) -- three independent RAW legs.
+        "baseline_turnover_mean_28": baseline_t_mean,
+        "baseline_turnover_std_28": baseline_t_std,
+        "baseline_amount_mean_28": baseline_amt_mean,
+        "turnover_vol_rank_28": turnover_vol_rank_28,
+        "turnover_stability_28": turnover_stability_28,
+        "excess_ret_2": excess_2,
+        "price_strength_2": price_str_2,
+        "recent_volume_z_t1_raw": z_t1_raw,
+        "recent_volume_z_t_raw": z_t_raw,
+        "recent_volume_z_mean_2_raw": z_agg["recent_volume_z_mean_2_raw"],
+        "recent_volume_z_mean_2_clip": z_agg["recent_volume_z_mean_2_clip"],
+        "recent_volume_z_max_2_raw": z_agg["recent_volume_z_max_2_raw"],
+        "recent_volume_z_max_2_clip": z_agg["recent_volume_z_max_2_clip"],
+        "effective_ticks_2": eff_ticks_2,
     }
     for n in features.excess_return_windows:
         feature_columns[f"excess_ret_{n}"] = excess[n]
@@ -284,19 +364,22 @@ def build_supply_dataset(
         horizon=label.horizon, method=label.label_method,
     ).to_numpy()
 
-    # --- document sec. 3.4: per-day 1%/99% winsorize then cross-sectional z-score ---
-    out[feature_names] = out[feature_names].replace([np.inf, -np.inf], np.nan)
+    # --- document sec. 3.4: per-day 1%/99% winsorize then cross-sectional z-score.
+    # V2 percentile-rank features in [0,1] bypass this pass to keep their interpretability
+    # (handoff 3.5); everything else follows the document's sec. 3.4 recipe. ---
+    scale_targets = [n for n in feature_names if n not in CROSS_SECTION_RANK_FEATURES]
+    out[scale_targets] = out[scale_targets].replace([np.inf, -np.inf], np.nan)
     if features.winsor_quantile:
         q = features.winsor_quantile
         grouped = out.groupby("datetime")
-        lower = grouped[feature_names].transform(lambda s: s.quantile(q))
-        upper = grouped[feature_names].transform(lambda s: s.quantile(1 - q))
-        out[feature_names] = out[feature_names].clip(lower, upper)
+        lower = grouped[scale_targets].transform(lambda s: s.quantile(q))
+        upper = grouped[scale_targets].transform(lambda s: s.quantile(1 - q))
+        out[scale_targets] = out[scale_targets].clip(lower, upper)
     if features.cross_sectional_zscore:
-        grouped = out.groupby("datetime")[feature_names]
+        grouped = out.groupby("datetime")[scale_targets]
         mean = grouped.transform("mean")
         std = grouped.transform("std", ddof=0)
-        out[feature_names] = (out[feature_names] - mean) / std.replace(0, np.nan)
+        out[scale_targets] = (out[scale_targets] - mean) / std.replace(0, np.nan)
 
     # --- sample filter (sec. 16): NaN out excluded rows, keep the grid ---
     exclude = ~valid_mask.to_numpy()

@@ -42,6 +42,15 @@ class SupplyFeatureConfig(StrictModel):
     persistence_window: int = Field(default=5, ge=1)
     # tick_size is uniform 0.01 CNY across modern A-share boards; exposed for completeness.
     tick_size: float = Field(default=0.01, gt=0)
+    # V2 stable-baseline + no-volume-rise structure (handoff doc sec. 3.2/3.6/3.7/3.8).
+    # Baseline window = t-29..t-2 (baseline_window bars) + event window = t-1..t
+    # (event_window bars); the event days NEVER enter the baseline mean/std (handoff 4.1.3).
+    baseline_window: int = Field(default=28, ge=2)
+    event_window: int = Field(default=2, ge=1, le=10)
+    z_clip_lower: float = Field(default=-3.0, lt=0, description="recent_volume_z clip lower (handoff 3.8)")
+    z_clip_upper: float = Field(default=3.0, gt=0, description="recent_volume_z clip upper; [-4,4] is a sensitivity variant")
+    std_floor_method: Literal["cross_section_quantile", "train_period_fixed"] = "cross_section_quantile"
+    std_floor_quantile: float = Field(default=0.10, ge=0, lt=0.5, description="daily cross-section quantile of baseline_std_28 (handoff 3.7)")
     winsor_quantile: float = Field(default=0.01, ge=0, lt=0.5)
     cross_sectional_zscore: bool = True
     min_listing_days: int = Field(default=60, ge=1, description="sample filter, document sec. 16")

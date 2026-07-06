@@ -24,15 +24,17 @@ def compute_factor_ic(
     eval_end: str,
     min_daily_n: int = 20,
     label_col: str = "label",
+    n_lag: int = 5,
 ) -> pd.DataFrame:
     """Daily Rank/Pearson IC summary for each factor over ``[eval_start, eval_end]``.
 
     Returns a DataFrame indexed by factor with columns: rank_ic_mean, rank_ic_ir,
     rank_ic_positive_ratio, rank_ic_newey_t, pearson_ic_mean, pearson_ic_ir, n_days.
+    ``n_lag`` is the Newey-West HAC lag for the t-stat; for an N-day overlapping label use
+    ``>= N - 1`` (handoff doc sec. 5: 5d→4, 10d→9, 15d→14).
     """
     mask = dataset["datetime"].between(pd.Timestamp(eval_start), pd.Timestamp(eval_end))
     sub = dataset.loc[mask]
-    n_lag = 5  # Newey-West lag for the t-stat (round-trip IC autocorrelation)
     records: list[dict] = []
     for f in factor_names:
         if f not in sub.columns:
