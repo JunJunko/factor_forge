@@ -7,8 +7,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 Factor Forge 是一个面向 **A 股日频**的因子评估与回测平台。V1 的边界是硬性约束，改动任何模块前都要先确认没有越界：
 
 - 仅沪深主板/创业板/科创板，仅日频；T 日收盘产生信号，T+1 开盘成交。
-- 因子**只能是 YAML + 受限 DSL**，禁止自由 Python、分钟/Tick、机器学习、自动挑参、任意策略逻辑、组合优化器。
-- 允许的回测空间被 Pydantic 锁死：持有期 ∈ {1,3,5,10,15}，TopN ∈ {2,5,10,20}（见 [config.py](src/factor_forge/config.py) 的 `ExperimentSpec.fixed_first_version_space`）。
+- 因子**只能是 YAML + 受限 DSL**，禁止自由 Python、分钟/Tick、自动挑参、任意策略逻辑、组合优化器。**因子评估链路内部禁止机器学习**；ML 有独立的研究/诊断管线（`src/factor_forge/ml/`），复用数据与回测底层，但有自己的配置空间与时序规约，且**不进入因子评估的评分门控链路**（见下文"研究/诊断层"）。
+- 因子实验的回测空间被 Pydantic 锁死：持有期 ∈ {1,3,5,10,15}，TopN ∈ {2,5,10,20}（见 [config.py](src/factor_forge/config.py) 的 `ExperimentSpec.fixed_first_version_space`）。**此约束仅适用于因子评估链路**；ML 研究链路用 [ml/config.py](src/factor_forge/ml/config.py) 的 `PortfolioConfig`，是更宽的另一套空间。
 
 ## 常用命令
 
@@ -46,6 +46,8 @@ PATH 配置好后 `python -m factor_forge.cli` 可简写为 `factor-forge`。运
 **评分层** (`scoring/`，[engine.py](src/factor_forge/scoring/engine.py))：六维合计 100 分（OOS 有效性/可交易表现/稳定性/TopN 结构/统计证据/独立性）+ 硬否决标志，输出 `INVALID/REJECTED/WATCHLIST/CANDIDATE/APPROVED`。**主测量组合固定为 universe=liquid, top_n=2, cost_bps=20**（见 `configs/contracts/alpha_scoring_v1.yaml`），评分各维度都以它为基准。缺失证据一律记 0 分，绝不臆造。
 
 `ExperimentRunner` 的门控顺序：L0 不过 → INVALID 停；数据覆盖阻碍命中 → INVALID 停；`direction: unknown` → WATCHLIST 停；L1 不过 → REJECTED 停；否则进 L2 全网格、可选 L3，最后评分。每次运行产出落到 `artifacts/runs/<run_id>/`（`run_id` 由数据版本 + 四份配置原文的哈希决定，配置不变即复用）。
+
+**研究/诊断层** (`ml/`，CLI 的 `ml` 子命令)：独立于评分链路。[MLExperimentRunner](src/factor_forge/ml/runner.py) 按严格不重叠的 train<valid<test 分段训练 LightGBM，`ValueRegressionRunner`、`StyleAttributionRunner`（[ml/value_style_attribution.py](src/factor_forge/ml/value_style_attribution.py)）做价值归因诊断。它们从不可变数据版本出发，再用**同一个** `BacktestEngine` 评估——因此复用底层数据/时序/回测不变量（T+1 开盘、收益映射到 T+2、涨停买不进/跌停卖顺延），但**不走 L0/L1/评分门控**，产出落在 `artifacts/ml_runs/`、`artifacts/value_*` 等独立目录。可选依赖 lightgbm/statsmodels 缺失时给出明确安装提示。其回测空间与字段规约见 [ml/config.py](src/factor_forge/ml/config.py) 的 `MLExperimentConfig`/`PortfolioConfig`，是比因子层更宽的研究专用空间——**不要与因子评估链路的空间混淆，也不要让 ML 产物回流进因子评估链路**。
 
 ## 关键不变量（改动时务必保持）
 

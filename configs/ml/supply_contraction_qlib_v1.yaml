@@ -1,0 +1,83 @@
+version: 1
+name: supply_contraction_qlib_v1
+project_config: configs/project.yaml
+data_version: latest
+require_full_segment_coverage: true
+
+segments:
+  train: {start: "2018-01-01", end: "2022-12-31"}
+  valid: {start: "2023-01-01", end: "2023-12-31"}
+  test:  {start: "2024-01-01", end: "2026-06-30"}
+
+features:
+  excess_return_windows: [1, 3, 5, 10]
+  volatility_window: 20
+  volatility_ddof: 1            # document '样本标准差' -> ddof=1
+  turnover_windows: [20, 60]
+  amount_window: 20
+  volume_residual_window: 120
+  volume_residual_min_periods: 80
+  price_impact_windows: [1, 5]
+  price_impact_denom_floor: 0.005
+  amihud_window: 20
+  zero_return_window: 20
+  log_amount_window: 20
+  effective_ticks_window: 5
+  persistence_window: 5
+  tick_size: 0.01               # A 股最小报价单位（现代统一档位）
+  winsor_quantile: 0.01         # 每日横截面 1%/99% 缩尾
+  cross_sectional_zscore: true
+  min_listing_days: 60          # 文档第16条样本过滤
+  # 样本权重（文档 8.6/9.5/9.6）：训练权重，非模型输入
+  use_sample_weight: true
+  price_weight_lambda: 2.0      # 1/(1+lambda*tick_noise)，文档建议 lambda∈{1,2,3}
+  liquidity_weight_low_quantile: 0.1   # 仅用训练期估计 A_low
+  liquidity_weight_full_quantile: 0.5  # 仅用训练期估计 A_full
+
+label:
+  horizon: 5
+  label_method: open_to_open    # 与 Qlib deal_price=("$open","$open") 及 BacktestEngine 一致
+  industry_neutralize: true
+  industry_aggregation: leave_one_out
+
+model:
+  loss: mse
+  learning_rate: 0.03
+  num_leaves: 31
+  max_depth: -1
+  num_boost_round: 800
+  early_stopping_rounds: 60
+  min_data_in_leaf: 80
+  feature_fraction: 0.8
+  bagging_fraction: 0.8
+  bagging_freq: 1
+  lambda_l1: 0.1
+  lambda_l2: 1.0
+  num_threads: -1
+  seed: 42
+
+backtest:
+  topk: 50
+  n_drop: 5
+  hold_thresh: 1                # >=1 强制 A 股 T+1 卖出
+  initial_cash: 10000000
+  round_trip_cost_bps: 20       # 一半买 / 一半卖
+  trade_unit: 100
+
+crosscheck:
+  enabled: true                 # 用项目 BacktestEngine 对 Model B 做不变量 sanity check
+  universe: tradeable
+  top_n: 50
+  holding_days: 5
+  cost_bps: 20
+
+# 文档第17条消融：Model A（仅控制变量）vs Model B（控制变量 + 低量上涨核心 + 组合因子）
+ablation:
+  models:
+    - name: "model_a_controls"
+      feature_groups: [controls]
+    - name: "model_b_supply"
+      feature_groups: [controls, supply_core, composite]
+
+qlib_provider_root: artifacts/qlib_bin_cache
+output_root: artifacts/supply_contraction_runs

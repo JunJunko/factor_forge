@@ -1,0 +1,210 @@
+{
+  "version": "data_v1_20260704T074315Z_88d001e2",
+  "universe": "liquid_top_2000",
+  "eval_window": [
+    "2017-01-01",
+    "2026-06-30"
+  ],
+  "ic": [
+    {
+      "factor": "volume_residual",
+      "rank_ic_mean": -0.011942958573734239,
+      "rank_ic_ir": -2.788294387777573,
+      "rank_ic_positive_ratio": 0.42421602787456447,
+      "rank_ic_newey_t": -4.320569984300769,
+      "pearson_ic_mean": -0.013213122748515972,
+      "pearson_ic_ir": -2.6205767477862247,
+      "n_days": 2296
+    },
+    {
+      "factor": "scarcity",
+      "rank_ic_mean": 0.011942958573734239,
+      "rank_ic_ir": 2.788294387777573,
+      "rank_ic_positive_ratio": 0.5757839721254355,
+      "rank_ic_newey_t": 4.320569984300769,
+      "pearson_ic_mean": 0.013213122748515976,
+      "pearson_ic_ir": 2.620576747786225,
+      "n_days": 2296
+    },
+    {
+      "factor": "volume_residual_5d_mean",
+      "rank_ic_mean": -0.01213973056918266,
+      "rank_ic_ir": -2.718942439270259,
+      "rank_ic_positive_ratio": 0.42813588850174217,
+      "rank_ic_newey_t": -3.8076711991545387,
+      "pearson_ic_mean": -0.01439509733215495,
+      "pearson_ic_ir": -2.7705580663357297,
+      "n_days": 2296
+    },
+    {
+      "factor": "scarcity_days_ratio_5",
+      "rank_ic_mean": 0.00996848063833826,
+      "rank_ic_ir": 2.7913963546717624,
+      "rank_ic_positive_ratio": 0.5818815331010453,
+      "rank_ic_newey_t": 4.051976131390603,
+      "pearson_ic_mean": 0.005666827354267163,
+      "pearson_ic_ir": 1.6259899785874787,
+      "n_days": 2296
+    },
+    {
+      "factor": "scarcity_slope_5",
+      "rank_ic_mean": 0.0057873671727805805,
+      "rank_ic_ir": 1.574674341485088,
+      "rank_ic_positive_ratio": 0.5374564459930313,
+      "rank_ic_newey_t": 3.368199293581077,
+      "pearson_ic_mean": 0.003297288853195995,
+      "pearson_ic_ir": 0.7562135877249644,
+      "n_days": 2296
+    },
+    {
+      "factor": "risk_adjusted_ret_5",
+      "rank_ic_mean": -0.016695689467922454,
+      "rank_ic_ir": -2.3894508322996635,
+      "rank_ic_positive_ratio": 0.44773519163763065,
+      "rank_ic_newey_t": -3.9291576241781927,
+      "pearson_ic_mean": -0.004243308823113786,
+      "pearson_ic_ir": -0.6245439101121292,
+      "n_days": 2296
+    },
+    {
+      "factor": "excess_ret_5",
+      "rank_ic_mean": -0.016740072479205153,
+      "rank_ic_ir": -2.3880969983065126,
+      "rank_ic_positive_ratio": 0.4520905923344948,
+      "rank_ic_newey_t": -3.9134739502460554,
+      "pearson_ic_mean": -0.006724568335596566,
+      "pearson_ic_ir": -0.94488846193356,
+      "n_days": 2296
+    },
+    {
+      "factor": "price_impact_5",
+      "rank_ic_mean": -0.014423720351042195,
+      "rank_ic_ir": -2.1953612241489115,
+      "rank_ic_positive_ratio": 0.45339721254355403,
+      "rank_ic_newey_t": -3.630811638982679,
+      "pearson_ic_mean": 0.001093239892054277,
+      "pearson_ic_ir": 0.19926508121562708,
+      "n_days": 2296
+    },
+    {
+      "factor": "up_days_ratio_5",
+      "rank_ic_mean": -0.007321493407314874,
+      "rank_ic_ir": -1.2391403892784145,
+      "rank_ic_positive_ratio": 0.4873693379790941,
+      "rank_ic_newey_t": -1.945943694312081,
+      "pearson_ic_mean": -0.0009960583918985127,
+      "pearson_ic_ir": -0.18127430274972112,
+      "n_days": 2296
+    },
+    {
+      "factor": "simple_low_volume_rise",
+      "rank_ic_mean": 0.0018601262738228274,
+      "rank_ic_ir": 0.43894645990769193,
+      "rank_ic_positive_ratio": 0.5258092738407699,
+      "rank_ic_newey_t": 0.7745871132850424,
+      "pearson_ic_mean": -0.004146199269272999,
+      "pearson_ic_ir": -1.1744542538468914,
+      "n_days": 2286
+    },
+    {
+      "factor": "conditional_scarcity_factor",
+      "rank_ic_mean": -0.0043222204042870655,
+      "rank_ic_ir": -1.0207799015124523,
+      "rank_ic_positive_ratio": 0.48606271777003485,
+      "rank_ic_newey_t": -1.8701377082756145,
+      "pearson_ic_mean": -0.0020089836758166195,
+      "pearson_ic_ir": -0.49862575824505095,
+      "n_days": 2296
+    },
+    {
+      "factor": "close_quality_scarcity_factor",
+      "rank_ic_mean": -0.004601136201392385,
+      "rank_ic_ir": -1.0963441733218062,
+      "rank_ic_positive_ratio": 0.48693379790940766,
+      "rank_ic_newey_t": -2.0203548519857315,
+      "pearson_ic_mean": -0.003781099713334104,
+      "pearson_ic_ir": -0.9552326681919006,
+      "n_days": 2296
+    },
+    {
+      "factor": "persistent_scarcity_factor",
+      "rank_ic_mean": -0.0041393999844727145,
+      "rank_ic_ir": -0.9755669925814059,
+      "rank_ic_positive_ratio": 0.48693379790940766,
+      "rank_ic_newey_t": -1.778500554538744,
+      "pearson_ic_mean": -0.001947295256410943,
+      "pearson_ic_ir": -0.4959661407272844,
+      "n_days": 2296
+    },
+    {
+      "factor": "price_adjusted_scarcity_factor",
+      "rank_ic_mean": -0.004188453299522008,
+      "rank_ic_ir": -0.987041526178208,
+      "rank_ic_positive_ratio": 0.48519163763066203,
+      "rank_ic_newey_t": -1.8002618880786314,
+      "pearson_ic_mean": -0.0019716503715543005,
+      "pearson_ic_ir": -0.5004977312851494,
+      "n_days": 2296
+    },
+    {
+      "factor": "volatility_20",
+      "rank_ic_mean": -0.03814281083928733,
+      "rank_ic_ir": -5.87351893312963,
+      "rank_ic_positive_ratio": 0.3606271777003484,
+      "rank_ic_newey_t": -8.27325067241887,
+      "pearson_ic_mean": -2.738318205842299e-05,
+      "pearson_ic_ir": -0.0040365077764414345,
+      "n_days": 2296
+    },
+    {
+      "factor": "log_float_market_cap",
+      "rank_ic_mean": 0.023604681422546226,
+      "rank_ic_ir": 3.0770899527256765,
+      "rank_ic_positive_ratio": 0.5775261324041812,
+      "rank_ic_newey_t": 4.197740493585439,
+      "pearson_ic_mean": -0.007379243263933572,
+      "pearson_ic_ir": -1.0823792491396877,
+      "n_days": 2296
+    },
+    {
+      "factor": "log_avg_amount_20",
+      "rank_ic_mean": -0.019673238774447103,
+      "rank_ic_ir": -3.031835037686346,
+      "rank_ic_positive_ratio": 0.41942508710801396,
+      "rank_ic_newey_t": -4.178167318639687,
+      "pearson_ic_mean": -0.016640309345953595,
+      "pearson_ic_ir": -2.7505665731468545,
+      "n_days": 2296
+    },
+    {
+      "factor": "amihud_illiquidity_20",
+      "rank_ic_mean": -0.0014428690547506904,
+      "rank_ic_ir": -0.22075932267126022,
+      "rank_ic_positive_ratio": 0.49825783972125437,
+      "rank_ic_newey_t": -0.30273381788710135,
+      "pearson_ic_mean": 0.020968296694134105,
+      "pearson_ic_ir": 3.46727859519551,
+      "n_days": 2296
+    },
+    {
+      "factor": "market_breadth",
+      "rank_ic_mean": NaN,
+      "rank_ic_ir": NaN,
+      "rank_ic_positive_ratio": NaN,
+      "rank_ic_newey_t": NaN,
+      "pearson_ic_mean": -5.629019918906004e-20,
+      "pearson_ic_ir": -0.05162087505895817,
+      "n_days": 0
+    },
+    {
+      "factor": "turnover_zscore_60",
+      "rank_ic_mean": -0.008698954525277346,
+      "rank_ic_ir": -1.9900410185624144,
+      "rank_ic_positive_ratio": 0.44337979094076657,
+      "rank_ic_newey_t": -3.0388714485037416,
+      "pearson_ic_mean": 0.0034280344258550304,
+      "pearson_ic_ir": 0.770302379079369,
+      "n_days": 2296
+    }
+  ]
+}

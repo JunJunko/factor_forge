@@ -1,0 +1,78 @@
+version: 1
+name: supply_run_top1000
+project_config: configs/project.yaml
+data_version: latest
+require_full_segment_coverage: true
+universe_top_n: 1000            # 按中位成交额取 top 1000（控制 volume_residual 构建与回测耗时）
+
+segments:
+  train: {start: "2017-01-01", end: "2021-12-31"}
+  valid: {start: "2022-01-01", end: "2022-12-31"}
+  test:  {start: "2023-01-01", end: "2026-06-30"}
+
+features:
+  excess_return_windows: [1, 3, 5, 10]
+  volatility_window: 20
+  volatility_ddof: 1
+  turnover_windows: [20, 60]
+  volume_residual_window: 120
+  volume_residual_min_periods: 80
+  price_impact_denom_floor: 0.005
+  amihud_window: 20
+  effective_ticks_window: 5
+  persistence_window: 5
+  tick_size: 0.01
+  winsor_quantile: 0.01
+  cross_sectional_zscore: true
+  min_listing_days: 60
+  use_sample_weight: true
+  price_weight_lambda: 2.0
+  liquidity_weight_low_quantile: 0.1
+  liquidity_weight_full_quantile: 0.5
+
+label:
+  horizon: 5
+  label_method: open_to_open
+  industry_neutralize: true
+  industry_aggregation: leave_one_out
+
+model:
+  loss: mse
+  learning_rate: 0.03
+  num_leaves: 31
+  max_depth: -1
+  num_boost_round: 500
+  early_stopping_rounds: 50
+  min_data_in_leaf: 80
+  feature_fraction: 0.8
+  bagging_fraction: 0.8
+  bagging_freq: 1
+  lambda_l1: 0.1
+  lambda_l2: 1.0
+  num_threads: -1
+  seed: 42
+
+backtest:
+  topk: 50
+  n_drop: 5
+  hold_thresh: 1
+  initial_cash: 10000000
+  round_trip_cost_bps: 20
+  trade_unit: 100
+
+crosscheck:
+  enabled: true
+  universe: tradeable
+  top_n: 50
+  holding_days: 5
+  cost_bps: 20
+
+ablation:
+  models:
+    - name: "model_a_controls"
+      feature_groups: [controls]
+    - name: "model_b_supply"
+      feature_groups: [controls, supply_core]   # IC 显示组合因子被 5d 反转拖负，先不加 composite
+
+qlib_provider_root: artifacts/qlib_bin_cache
+output_root: artifacts/supply_contraction_runs

@@ -65,6 +65,22 @@ def value_hmm_regime(path: Path):
     typer.echo(json.dumps(result, ensure_ascii=False, indent=2, default=json_default))
 
 
+@ml_app.command("value-style-attribution")
+def value_style_attribution(path: Path):
+    """Decompose value strategy excess return into style-factor exposures + residual alpha."""
+    from factor_forge.ml.value_style_attribution import StyleAttributionRunner
+    result = StyleAttributionRunner().run(path)
+    typer.echo(json.dumps(result, ensure_ascii=False, indent=2, default=json_default))
+
+
+@ml_app.command("supply-run")
+def supply_run(path: Path):
+    """Train + backtest the low-volume-rise supply-contraction factor via Qlib (A/B ablation)."""
+    from factor_forge.ml.supply_runner import SupplyContractionRunner
+    result = SupplyContractionRunner().run(path)
+    typer.echo(json.dumps(result, ensure_ascii=False, indent=2, default=json_default))
+
+
 @data_app.command("init")
 def data_init(config: Path = typer.Option(Path("configs/project.yaml"))):
     project = load_project(config)

@@ -1,0 +1,24 @@
+version: 1
+name: value_style_attribution_v1
+project_config: configs/project.yaml
+data_version: latest
+fundamentals_path: data/fundamentals_pit.parquet
+predictions_path: artifacts/value_regression_runs/value_regression_lightgbm_v1_20260704T124328Z_74951fe9/predictions.parquet
+
+portfolio:
+  universe: liquid
+  top_n: 50
+  holding_days: 20
+  initial_cash: 10000000
+  lot_size: 100
+  cost_bps: 20
+
+gross_cost_bps: 0.0
+net_cost_bps: 20.0
+style_factors: [size, value, momentum, volatility, liquidity]
+factor_universe: liquid
+nw_lag: 15
+bootstrap_blocks: 1000
+bootstrap_seed: 71
+by_year: true
+output_root: artifacts/value_style_attribution
