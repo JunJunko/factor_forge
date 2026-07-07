@@ -25,13 +25,22 @@ from atr_reversion_defensive_gate import _risk_kill_only_gate
 from atr_reversion_pit_hmm_calibrated_backtest import _market_features, _tiered_weight, _walk_forward_hmm
 from atr_reversion_pit_liquidity_backtest import _attach_and_preprocess_pit, _pit_liquidity_flags
 from atr_reversion_strategy_regime_mining import _build_regime_features
+from atr_reversion_walk_forward import REBALANCE_DAYS
 
 
-SIGNAL_DATE = "2026-07-03"
+SIGNAL_DATE: str | None = None
 TRAIN_YEARS = 2
 TOP_N = 5
+FIT_QUALITY_LOOKBACK = 40
+FIT_QUALITY_MIN_OBS = 15
+EXCLUDED_BOARDS = ["STAR 688/689.SH", "ChiNext 300/301/302.SZ", "Beijing *.BJ"]
 OUTPUT_ROOT = Path("artifacts/atr_reversion_live_signals")
 CONFIG_PATH = "configs/ml/atr_reversion_lightgbm_v1.yaml"
+FIT_QUALITY_SOURCE_RUN = Path(
+    "artifacts/atr_reversion_runs/"
+    "atr_lower_shadow_reversion_v1_pit_liquidity_20260706T091843Z/"
+    "hmm_window_comparison_20260707T002239Z"
+)
 HMM_RANK_PATH = Path(
     "artifacts/atr_reversion_runs/"
     "atr_lower_shadow_reversion_v1_pit_liquidity_20260706T091843Z/"
@@ -125,6 +134,146 @@ def _stock_name_map() -> pd.DataFrame:
     return pd.DataFrame({"ts_code": [], "name": []})
 
 
+def _load_fit_quality_predictions(signal_date: pd.Timestamp) -> pd.DataFrame:
+    frames = []
+    for path in sorted(FIT_QUALITY_SOURCE_RUN.glob("test_*/predictions_valid_test_rolling_2y.parquet")):
+        pred = pd.read_parquet(path, columns=["trade_date", "ts_code", "factor_value"])
+        pred["trade_date"] = pd.to_datetime(pred["trade_date"])
+        pred = pred[pred["ts_code"].map(_permission_eligible)]
+        frames.append(pred[pred["trade_date"].le(signal_date)])
+    if not frames:
+        return pd.DataFrame(columns=["trade_date", "ts_code", "factor_value"])
+    out = (
+        pd.concat(frames, ignore_index=True)
+        .sort_values(["trade_date", "ts_code"])
+        .drop_duplicates(["trade_date", "ts_code"], keep="last")
+    )
+    return out[out["trade_date"].le(signal_date)].copy()
+
+
+def _fit_quality_for_signal(
+    panel: pd.DataFrame,
+    pit: pd.DataFrame,
+    signal_date: pd.Timestamp,
+    log,
+) -> dict[str, object]:
+    pred = _load_fit_quality_predictions(signal_date)
+    if pred.empty:
+        log("fit-quality: no historical prediction file found; using normal score direction")
+        return _empty_fit_quality(signal_date, "missing_prediction_history")
+
+    start = pred["trade_date"].min()
+    if "permission_eligible" not in panel.columns:
+        panel = panel.copy()
+        panel["permission_eligible"] = panel["ts_code"].map(_permission_eligible).astype(bool)
+    p = panel.loc[
+        panel["trade_date"].between(start, signal_date) & panel["permission_eligible"]
+    ].merge(
+        pit[["trade_date", "ts_code", "pit_top1000"]],
+        on=["trade_date", "ts_code"],
+        how="left",
+    )
+    p["pit_top1000"] = p["pit_top1000"].fillna(False).astype(bool)
+    data = p.merge(pred, on=["trade_date", "ts_code"], how="left").sort_values(["ts_code", "trade_date"])
+    data["next_open"] = data.groupby("ts_code")["adj_open"].shift(-1)
+    data["exit_open"] = data.groupby("ts_code")["adj_open"].shift(-(REBALANCE_DAYS + 1))
+    data["exit_date"] = data.groupby("ts_code")["trade_date"].shift(-(REBALANCE_DAYS + 1))
+    data["fwd_ret"] = data["exit_open"] / data["next_open"] - 1.0
+    eligible = (
+        data["pit_top1000"]
+        & data["factor_value"].notna()
+        & data["fwd_ret"].replace([np.inf, -np.inf], np.nan).notna()
+        & data["exit_date"].notna()
+        & pd.to_datetime(data["exit_date"]).le(signal_date)
+    )
+    daily = data.loc[eligible].copy()
+    rows = []
+    for date, g in daily.groupby("trade_date", sort=True):
+        if len(g) < 100:
+            continue
+        ranked = g["factor_value"].rank(method="first")
+        decile = pd.qcut(ranked, 10, labels=False, duplicates="drop")
+        g = g.assign(decile=decile)
+        dec = g.groupby("decile", observed=True)["fwd_ret"].mean()
+        spread = float(dec.loc[dec.index.max()] - dec.loc[dec.index.min()]) if len(dec) >= 2 else np.nan
+        top = g.nlargest(TOP_N, "factor_value")
+        rows.append(
+            {
+                "trade_date": date,
+                "known_date": pd.to_datetime(g["exit_date"].max()),
+                "rank_ic": float(g["factor_value"].corr(g["fwd_ret"], method="spearman")),
+                "decile_spread": spread,
+                "top5_excess_forward_return": float(top["fwd_ret"].mean() - g["fwd_ret"].mean()),
+                "top5_hit_rate": float((top["fwd_ret"] > 0.0).mean()),
+            }
+        )
+    fit = pd.DataFrame(rows)
+    if fit.empty:
+        log("fit-quality: no completed historical outcomes; using normal score direction")
+        return _empty_fit_quality(signal_date, "missing_completed_outcomes")
+
+    hist = fit.sort_values("known_date")
+    hist = hist[hist["known_date"].le(signal_date)].tail(FIT_QUALITY_LOOKBACK)
+    rank_ic = float(hist["rank_ic"].mean()) if len(hist) else np.nan
+    spread = float(hist["decile_spread"].mean()) if len(hist) else np.nan
+    top5_excess = float(hist["top5_excess_forward_return"].mean()) if len(hist) else np.nan
+    top5_hit = float(hist["top5_hit_rate"].mean()) if len(hist) else np.nan
+    flip = len(hist) >= FIT_QUALITY_MIN_OBS and rank_ic < 0.0 and spread < 0.0
+    direction = -1.0 if flip else 1.0
+    log(
+        "fit-quality frozen rule "
+        f"lookback={FIT_QUALITY_LOOKBACK} min_obs={FIT_QUALITY_MIN_OBS} "
+        f"fit_obs={len(hist)} rank_ic={rank_ic:.4f} decile_spread={spread:.4f} "
+        f"score_direction={direction:+.0f}"
+    )
+    return {
+        "policy": "fit_quality_flip_only_frozen",
+        "lookback": FIT_QUALITY_LOOKBACK,
+        "min_obs": FIT_QUALITY_MIN_OBS,
+        "fit_obs": int(len(hist)),
+        "rank_ic_rolling": rank_ic,
+        "decile_spread_rolling": spread,
+        "top5_excess_rolling": top5_excess,
+        "top5_hit_rolling": top5_hit,
+        "score_direction": direction,
+        "flipped": bool(flip),
+        "latest_completed_signal_date": hist["trade_date"].max() if len(hist) else None,
+        "latest_known_date": hist["known_date"].max() if len(hist) else None,
+        "source_run": str(FIT_QUALITY_SOURCE_RUN),
+    }
+
+
+def _empty_fit_quality(signal_date: pd.Timestamp, reason: str) -> dict[str, object]:
+    return {
+        "policy": "fit_quality_flip_only_frozen",
+        "lookback": FIT_QUALITY_LOOKBACK,
+        "min_obs": FIT_QUALITY_MIN_OBS,
+        "fit_obs": 0,
+        "rank_ic_rolling": np.nan,
+        "decile_spread_rolling": np.nan,
+        "top5_excess_rolling": np.nan,
+        "top5_hit_rolling": np.nan,
+        "score_direction": 1.0,
+        "flipped": False,
+        "latest_completed_signal_date": None,
+        "latest_known_date": None,
+        "source_run": str(FIT_QUALITY_SOURCE_RUN),
+        "fallback_reason": reason,
+        "asof": signal_date,
+    }
+
+
+def _permission_eligible(ts_code: str) -> bool:
+    code = str(ts_code)
+    if code.endswith(".BJ"):
+        return False
+    if code.endswith(".SH") and code[:3] in {"688", "689"}:
+        return False
+    if code.endswith(".SZ") and code[:3] in {"300", "301", "302"}:
+        return False
+    return True
+
+
 def _train_model(dataset: pd.DataFrame, features: list[str], train_start: pd.Timestamp, signal_date: pd.Timestamp, cfg, log):
     from lightgbm import LGBMRegressor
 
@@ -152,8 +301,14 @@ def _train_model(dataset: pd.DataFrame, features: list[str], train_start: pd.Tim
     return model, eligible
 
 
-def main(signal_date: str = SIGNAL_DATE, top_n: int = TOP_N) -> None:
-    signal_ts = pd.Timestamp(signal_date)
+def main(signal_date: str | None = SIGNAL_DATE, top_n: int = TOP_N) -> None:
+    preloaded: tuple[str, pd.DataFrame] | None = None
+    if signal_date is None:
+        preloaded = _load_panel("latest")
+        signal_ts = pd.Timestamp(preloaded[1]["trade_date"].max()).normalize()
+    else:
+        signal_ts = pd.Timestamp(signal_date)
+    signal_date_text = f"{signal_ts:%Y-%m-%d}"
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     output = OUTPUT_ROOT / f"rolling2y_risk_kill_signal_{signal_ts:%Y%m%d}_{stamp}"
     output.mkdir(parents=True, exist_ok=False)
@@ -170,7 +325,8 @@ def main(signal_date: str = SIGNAL_DATE, top_n: int = TOP_N) -> None:
     )
     features = FEATURE_GROUPS["all"]
 
-    version, panel = _load_panel("latest")
+    version, panel = preloaded if preloaded is not None else _load_panel("latest")
+    panel["permission_eligible"] = panel["ts_code"].map(_permission_eligible).astype(bool)
     manifest_end = panel["trade_date"].max()
     if signal_ts > manifest_end:
         raise ValueError(f"signal_date {signal_ts.date()} is after latest panel end {manifest_end.date()}")
@@ -201,16 +357,25 @@ def main(signal_date: str = SIGNAL_DATE, top_n: int = TOP_N) -> None:
         dataset["datetime"].eq(signal_ts) & dataset["pit_top1000"],
         ["datetime", "instrument", *features, "pit_top1000"],
     ].dropna(subset=features)
+    predict_rows = predict_rows[predict_rows["instrument"].map(_permission_eligible)].copy()
     if predict_rows.empty:
         raise ValueError(f"No predictable PIT rows on {signal_ts.date()}.")
     log(f"predicting signal_date={signal_ts.date()} candidates={len(predict_rows):,}")
     pred = predict_rows[["datetime", "instrument"]].rename(columns={"datetime": "trade_date", "instrument": "ts_code"})
     pred["factor_value"] = model.predict(predict_rows[features])
-    pred = pred.sort_values("factor_value", ascending=False).reset_index(drop=True)
+
+    log("computing frozen fit-quality score direction")
+    live_pit = _pit_liquidity_flags(panel.loc[panel["trade_date"].le(signal_ts)].copy())
+    fit_quality = _fit_quality_for_signal(panel, live_pit, signal_ts, log)
+    score_direction = float(fit_quality["score_direction"])
+    pred["raw_factor_value"] = pred["factor_value"]
+    pred["score_direction"] = score_direction
+    pred["factor_value"] = pred["raw_factor_value"] * score_direction
+    pred = pred.sort_values(["factor_value", "ts_code"], ascending=[False, True]).reset_index(drop=True)
 
     log("computing HMM state and tiered exposure")
     market = _market_features(regime_panel)
-    states = _walk_forward_hmm(market, signal_date, signal_date, log)
+    states = _walk_forward_hmm(market, signal_date_text, signal_date_text, log)
     state_row = states.loc[states["trade_date"].eq(signal_ts)].iloc[-1]
     ranks = _hmm_ranks(HMM_RANK_PATH)
     hmm_exposure = float(_tiered_weight(state_row, ranks))
@@ -276,6 +441,11 @@ def main(signal_date: str = SIGNAL_DATE, top_n: int = TOP_N) -> None:
         "intended_execution": "next_trade_day_open",
         "data_version": version,
         "model": "LightGBM rolling_2y",
+        "signal_algorithm": "rolling_2y + HMM rolling_3y PIT + risk_kill + frozen fit-quality flip",
+        "permission_filter": {
+            "enabled": True,
+            "excluded_boards": EXCLUDED_BOARDS,
+        },
         "train_start_requested": train_start,
         "train_start_actual": train["datetime"].min(),
         "train_end_actual": train["datetime"].max(),
@@ -291,6 +461,7 @@ def main(signal_date: str = SIGNAL_DATE, top_n: int = TOP_N) -> None:
         "hmm_exposure": hmm_exposure,
         "risk_gate": risk_gate,
         "final_exposure": final_exposure,
+        "fit_quality": fit_quality,
         "risk_gate_inputs": {
             "xsec_vol_20": float(gate_row.get("xsec_vol_20", np.nan)),
             "market_ret_20": float(gate_row.get("market_ret_20", np.nan)),
@@ -303,11 +474,14 @@ def main(signal_date: str = SIGNAL_DATE, top_n: int = TOP_N) -> None:
         "next_day_fillability_note": "Cannot verify next-day suspension/limit-up/open fill until next trading day data is available.",
     }
     (output / "signal_summary.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2, default=_json_default), encoding="utf-8")
-    log(f"final_exposure={final_exposure:.2f} hmm_exposure={hmm_exposure:.2f} risk_gate={risk_gate:.2f}")
+    log(
+        f"final_exposure={final_exposure:.2f} hmm_exposure={hmm_exposure:.2f} "
+        f"risk_gate={risk_gate:.2f} score_direction={score_direction:+.0f}"
+    )
     log(f"wrote output={output}")
     print(f"run_dir={output}")
 
 
 if __name__ == "__main__":
     args = sys.argv[1:]
-    main(*(args[:1] or [SIGNAL_DATE]))
+    main(args[0] if args else None)

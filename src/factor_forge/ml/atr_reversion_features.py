@@ -61,6 +61,11 @@ def lower_shadow(open_: pd.Series, close: pd.Series, low: pd.Series, atr_value: 
     return ((body_bottom - low) / (atr_value + EPS)).clip(lower=0.0)
 
 
+def upper_shadow(open_: pd.Series, close: pd.Series, high: pd.Series, atr_value: pd.Series) -> pd.Series:
+    body_top = pd.Series(np.maximum(open_.to_numpy(), close.to_numpy()), index=open_.index)
+    return ((high - body_top) / (atr_value + EPS)).clip(lower=0.0)
+
+
 def intraday_repair(close: pd.Series, low: pd.Series, high: pd.Series) -> pd.Series:
     span = high - low
     return ((close - low) / (span + EPS)).where(span > EPS, 0.5).clip(0.0, 1.0)

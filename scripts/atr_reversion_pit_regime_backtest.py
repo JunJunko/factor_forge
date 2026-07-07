@@ -14,7 +14,8 @@ import pandas as pd
 from factor_forge.config import load_project
 from factor_forge.data.repository import DataVersionRepository
 
-from atr_reversion_pit_liquidity_backtest import _benchmark_return, _yearly_tables
+from atr_reversion_benchmark import csi1000_open_to_open_returns
+from atr_reversion_pit_liquidity_backtest import _yearly_tables
 from atr_reversion_regime_small_backtest import _run_regime_backtest
 from atr_reversion_small_portfolio_backtest import _json_default, _metrics
 
@@ -131,11 +132,8 @@ def _run_regime_backtest_pit(panel, pred, states, *, top_n, rebalance_days, cost
         cost_bps=cost_bps,
         policy=policy,
     )
-    # Replace benchmark with PIT universe benchmark. The reused engine's benchmark is
-    # full test panel tradeable; the strategy universe here is PIT top1000.
-    data = panel.merge(pred, on=["trade_date", "ts_code"], how="left")
-    dates = list(pd.Index(data["trade_date"].unique()).sort_values())
-    daily["benchmark_return"] = [_benchmark_return(data, dates, i) for i in range(len(dates))]
+    dates = list(pd.Index(daily["trade_date"].unique()).sort_values())
+    daily["benchmark_return"] = csi1000_open_to_open_returns(dates)
     daily["excess_return"] = daily["return"] - daily["benchmark_return"]
     return daily, trades
 
@@ -209,4 +207,3 @@ if __name__ == "__main__":
     pit_run = sys.argv[1] if len(sys.argv) > 1 else "artifacts/atr_reversion_runs/atr_lower_shadow_reversion_v1_pit_liquidity_20260706T091843Z"
     states_path = sys.argv[2] if len(sys.argv) > 2 else "artifacts/value_hmm_regime_validations/value_hmm_regime_v1_20260704T164011Z_4ef4866a/hmm_daily_states.csv"
     main(pit_run, states_path)
-

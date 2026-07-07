@@ -15,6 +15,8 @@ CORE_FEATURES = [
     "down_deviation_pct",
     "lower_shadow_atr",
     "lower_shadow_pct",
+    "upper_shadow_atr",
+    "upper_shadow_pct",
     "intraday_repair",
     "core_signal",
 ]
@@ -43,6 +45,7 @@ FEATURE_GROUPS = {
 NO_CROSS_SECTION_ZSCORE = frozenset({
     "down_deviation_pct",
     "lower_shadow_pct",
+    "upper_shadow_pct",
     "vol_state_pct",
     "limit_flag",
     "near_down_limit_flag",
@@ -88,9 +91,11 @@ def build_atr_reversion_dataset(
     ma60 = af.rolling_mean(data["adj_close"], stocks, features.long_ma_window)
     down = af.downside_deviation(data["adj_close"], ma20, atr20)
     wick = af.lower_shadow(data["raw_open"], data["raw_close"], data["raw_low"], atr20)
+    upper_wick = af.upper_shadow(data["raw_open"], data["raw_close"], data["raw_high"], atr20)
     repair = af.intraday_repair(data["raw_close"], data["raw_low"], data["raw_high"])
     down_pct = af.rolling_percentile(down, stocks, features.percentile_window)
     wick_pct = af.rolling_percentile(wick, stocks, features.percentile_window)
+    upper_wick_pct = af.rolling_percentile(upper_wick, stocks, features.percentile_window)
     vol_state = atr20 / data["adj_close"].where(data["adj_close"] > 0)
     vol_pct = af.rolling_percentile(vol_state, stocks, features.percentile_window)
     log_amt_20 = sf.log_avg_amount(data["amount_cny"], stocks, features.amount_window)
@@ -122,6 +127,8 @@ def build_atr_reversion_dataset(
         "down_deviation_pct": down_pct,
         "lower_shadow_atr": wick,
         "lower_shadow_pct": wick_pct,
+        "upper_shadow_atr": upper_wick,
+        "upper_shadow_pct": upper_wick_pct,
         "intraday_repair": repair,
         "core_signal": af.core_signal(down, wick, repair),
         "trend_state": af.trend_state(data["adj_close"], ma20, ma60),

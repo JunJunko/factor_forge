@@ -16,6 +16,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from atr_reversion_benchmark import csi1000_open_to_open_returns
 from factor_forge.config import load_project
 from factor_forge.data.repository import DataVersionRepository
 
@@ -199,7 +200,6 @@ def _run_periodic_backtest(
             else:
                 pos_value += pos["shares"] * pos["entry_raw_open"]
         nav = cash + pos_value
-        bench = _benchmark_return(data, dates, i)
         daily_rows.append({
             "trade_date": date,
             "nav": nav,
@@ -210,10 +210,10 @@ def _run_periodic_backtest(
             "transaction_cost": cost,
             "executed_buys": buys,
             "executed_sells": sells,
-            "benchmark_return": bench,
         })
 
     daily = pd.DataFrame(daily_rows)
+    daily["benchmark_return"] = csi1000_open_to_open_returns(dates)
     daily["return"] = daily["nav"].pct_change().fillna(0.0)
     daily["excess_return"] = daily["return"] - daily["benchmark_return"]
     return daily, pd.DataFrame(trade_rows)

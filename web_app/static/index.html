@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>ATR Reversion 日常工作台</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <header class="topbar">
+        <div>
+          <h1>ATR Reversion 日常工作台</h1>
+          <p>按主链路执行：update_data -> generate_all_model_signals -> compute_health -> decide_position_state -> build_orders -> execution_audit -> shadow_report</p>
+        </div>
+        <button id="refreshBtn" class="iconBtn" title="刷新状态">↻</button>
+      </header>
+
+      <section class="heroPanel">
+        <div class="runForm">
+          <label>
+            信号日期
+            <input id="signalDate" type="date" />
+          </label>
+          <label>
+            数据开始
+            <input id="syncStart" inputmode="numeric" placeholder="20260706" />
+          </label>
+          <label>
+            数据结束
+            <input id="syncEnd" inputmode="numeric" placeholder="20260706" />
+          </label>
+          <label class="check">
+            <input id="runUpdateData" type="checkbox" checked />
+            同步数据
+          </label>
+          <label class="check">
+            <input id="mergeFull" type="checkbox" checked />
+            合并完整面板
+          </label>
+          <label class="check">
+            <input id="forceRegenerate" type="checkbox" />
+            强制重算信号
+          </label>
+          <button id="dailyRunBtn" class="primary big">运行每日主链路</button>
+        </div>
+        <label class="holdingsBox">
+          当前持仓
+          <textarea id="holdingsText" rows="4" placeholder="每行一个持仓：代码,买入日期&#10;示例：600276.SH,2026-06-22"></textarea>
+        </label>
+      </section>
+
+      <section class="pipeline" id="pipeline"></section>
+
+      <section class="panel dailyPanel">
+        <div class="panelHead">
+          <div>
+            <div class="panelTitle">今日决策</div>
+            <p id="decisionText" class="muted">等待信号。</p>
+          </div>
+          <div id="decisionBadge" class="decisionBadge">-</div>
+        </div>
+        <div id="dailyWarnings" class="warningList hidden"></div>
+        <div class="summaryGrid">
+          <div>
+            <div class="subTitle">执行信息</div>
+            <dl id="executionSummary" class="kv compact"></dl>
+          </div>
+          <div>
+            <div class="subTitle">健康度层</div>
+            <dl id="riskSummary" class="kv compact"></dl>
+          </div>
+          <div>
+            <div class="subTitle">审计与留痕</div>
+            <dl id="auditSummary" class="kv compact"></dl>
+          </div>
+        </div>
+        <div id="auditLinks" class="links"></div>
+      </section>
+
+      <section class="panel resultPanel">
+        <div class="panelHead">
+          <div>
+            <div class="panelTitle">订单草稿 / 候选股</div>
+            <p id="exposureBanner" class="muted"></p>
+          </div>
+          <div class="buttonRow">
+            <button id="addShadowBtn" class="secondary">加入影子持仓</button>
+            <button id="sellAdviceBtn" class="secondary">仅检查持仓卖出</button>
+          </div>
+        </div>
+        <div id="sellBanner" class="banner hidden"></div>
+        <div class="tableWrap">
+          <table>
+            <thead>
+              <tr>
+                <th>选择</th>
+                <th>排名</th>
+                <th>代码</th>
+                <th>名称</th>
+                <th>行业</th>
+                <th>模型分</th>
+                <th>目标权重</th>
+                <th>收盘价</th>
+                <th>成交额</th>
+              </tr>
+            </thead>
+            <tbody id="topRows"></tbody>
+          </table>
+        </div>
+        <div id="fileLinks" class="links"></div>
+      </section>
+
+      <section class="panel resultPanel">
+        <div class="panelHead">
+          <div>
+            <div class="panelTitle">影子持仓评估</div>
+            <p id="shadowSummary" class="muted">尚未加入影子持仓。</p>
+          </div>
+          <button id="refreshShadowBtn" class="secondary">刷新影子评估</button>
+        </div>
+        <div class="tableWrap">
+          <table>
+            <thead>
+              <tr>
+                <th>代码</th>
+                <th>名称</th>
+                <th>信号日</th>
+                <th>入场日</th>
+                <th>状态</th>
+                <th>持有交易日</th>
+                <th>入场价</th>
+                <th>最新价</th>
+                <th>收益</th>
+                <th>说明</th>
+              </tr>
+            </thead>
+            <tbody id="shadowRows"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="panel resultPanel">
+        <div class="panelTitle">卖出检查结果</div>
+        <div class="tableWrap">
+          <table>
+            <thead>
+              <tr>
+                <th>代码</th>
+                <th>名称</th>
+                <th>买入日</th>
+                <th>持有交易日</th>
+                <th>动作</th>
+                <th>原因</th>
+                <th>卖压效率</th>
+                <th>卖压偏离</th>
+                <th>避雷</th>
+              </tr>
+            </thead>
+            <tbody id="sellRows"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <details class="panel advanced">
+        <summary>高级操作</summary>
+        <div class="advancedGrid">
+          <div>
+            <div class="subTitle">数据状态</div>
+            <dl id="dataStatus" class="kv compact"></dl>
+            <button id="syncBtn" class="secondary">只同步数据</button>
+          </div>
+          <div>
+            <div class="subTitle">最新信号</div>
+            <dl id="signalStatus" class="kv compact"></dl>
+            <button id="signalBtn" class="secondary">只生成候选股</button>
+          </div>
+        </div>
+      </details>
+
+      <section class="panel">
+        <div class="panelTitle">任务日志</div>
+        <div id="taskMeta" class="taskMeta">暂无任务</div>
+        <pre id="logs" class="logs"></pre>
+      </section>
+    </main>
+
+    <script src="/static/app.js"></script>
+  </body>
+</html>
