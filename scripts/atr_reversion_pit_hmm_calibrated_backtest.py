@@ -226,7 +226,7 @@ def _train_predict_valid_test(dataset, features, cfg, log) -> pd.DataFrame:
 def _market_features(panel: pd.DataFrame) -> pd.DataFrame:
     p = panel.sort_values(["ts_code", "trade_date"]).copy()
     ret = p["pct_change"] / 100.0 if "pct_change" in p else p.groupby("ts_code")["adj_close"].pct_change(fill_method=None)
-    eligible = p.get("is_factor_eligible", p.get("is_tradeable", pd.Series(True, index=p.index))).fillna(False).astype(bool)
+    eligible = p.get("is_tradeable", p.get("is_factor_eligible", pd.Series(True, index=p.index))).fillna(False).astype(bool)
     src = pd.DataFrame({
         "trade_date": p["trade_date"],
         "ret": ret,
@@ -293,6 +293,15 @@ def _walk_forward_hmm(market: pd.DataFrame, start: str, end: str, log) -> pd.Dat
         out["hmm_train_start"] = train["trade_date"].min()
         out["hmm_train_end"] = train["trade_date"].max()
         outputs.append(out)
+    if not outputs:
+        target = f.loc[f["trade_date"].between(pd.Timestamp(start), pd.Timestamp(end)), "trade_date"]
+        available = "none" if f.empty else f"{f['trade_date'].min().date()}..{f['trade_date'].max().date()}"
+        target_text = "none" if target.empty else f"{target.min().date()}..{target.max().date()}"
+        raise RuntimeError(
+            f"no HMM predictions for {start}..{end}; "
+            f"standardized_market_range={available}; target_dates={target_text}; "
+            f"required_history_days={HISTORY_DAYS}"
+        )
     states = pd.concat(outputs, ignore_index=True).sort_values("trade_date")
     log(f"HMM states date range={states.trade_date.min().date()}..{states.trade_date.max().date()}")
     return states
@@ -404,4 +413,3 @@ if __name__ == "__main__":
     config = sys.argv[1] if len(sys.argv) > 1 else "configs/ml/atr_reversion_lightgbm_v1.yaml"
     pit_run = sys.argv[2] if len(sys.argv) > 2 else "artifacts/atr_reversion_runs/atr_lower_shadow_reversion_v1_pit_liquidity_20260706T091843Z"
     main(config, pit_run)
-

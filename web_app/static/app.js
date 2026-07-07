@@ -49,8 +49,32 @@ function fmtMoney(value) {
   return n.toFixed(0);
 }
 
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;");
+}
+
 function renderKv(el, rows) {
-  el.innerHTML = rows.map(([k, v]) => `<dt>${k}</dt><dd>${v ?? ""}</dd>`).join("");
+  el.innerHTML = rows.map(([k, v, help]) => {
+    const hint = help
+      ? `<span class="helpWrap">
+          <button class="helpDot" type="button" aria-label="${escapeHtml(k)}说明" aria-expanded="false">?</button>
+          <span class="helpTip" role="tooltip">${escapeHtml(help)}</span>
+        </span>`
+      : "";
+    return `<dt><span>${escapeHtml(k)}</span>${hint}</dt><dd>${v ?? ""}</dd>`;
+  }).join("");
+}
+
+function closeHelpTips(exceptButton = null) {
+  document.querySelectorAll(".helpDot.isOpen").forEach((button) => {
+    if (button === exceptButton) return;
+    button.classList.remove("isOpen");
+    button.setAttribute("aria-expanded", "false");
+  });
 }
 
 async function api(path, options = {}) {
@@ -183,6 +207,7 @@ function renderDashboard(dashboard) {
   const execution = dashboard.execution || {};
   const risk = dashboard.risk || {};
   const fit = risk.fit_quality || {};
+  const gate = risk.risk_gate_inputs || {};
   const audit = dashboard.research_audit || {};
   const tradeAudit = audit.trade_audit || {};
   const latestYear = audit.frozen_latest_year || {};
@@ -196,33 +221,26 @@ function renderDashboard(dashboard) {
   renderWarnings(dashboard.warnings);
 
   renderKv($("executionSummary"), [
-    ["信号日", execution.signal_date],
-    ["执行口径", execution.intended_execution === "next_trade_day_open" ? "下一交易日开盘" : execution.intended_execution],
-    ["最终仓位", fmtPct(execution.final_exposure)],
-    ["目标持仓", `${execution.target_position_count ?? ""} / ${execution.candidate_count ?? ""}`],
-    ["可预测股票", execution.predictable_candidates?.toLocaleString?.() ?? execution.predictable_candidates],
-    ["信号日阻塞", execution.signal_day_block_count],
+    ["信号日", execution.signal_date, "这批候选股使用哪一天收盘后可得的数据生成。实盘只能在之后的交易日执行。"],
+    ["执行口径", execution.intended_execution === "next_trade_day_open" ? "下一交易日开盘" : execution.intended_execution, "确认是否严格用下一交易日开盘成交，不用信号日收盘价。"],
+    ["最终仓位", fmtPct(execution.final_exposure), "今日决策的最终资金暴露。0% 表示不新建仓，只观察或处理已有持仓。"],
+    ["目标持仓", `${execution.target_position_count ?? ""} / ${execution.candidate_count ?? ""}`, "前者是实际分配权重的股票数，后者是页面展示的候选数。"],
+    ["信号阻塞", execution.signal_day_block_count, "候选股在信号日已经发现的停牌、ST、涨停开盘等风险标记数量。执行前还要看下一交易日。"],
   ]);
 
   renderKv($("riskSummary"), [
-    ["模型", risk.model],
-    ["训练窗口", `${risk.train_start || ""} ~ ${risk.train_end || ""}`],
-    ["HMM仓位", fmtPct(risk.hmm_exposure)],
-    ["防守门控", fmtPct(risk.risk_gate)],
-    ["fit方向", Number(fit.score_direction) < 0 ? "反向" : "正向"],
-    ["fit样本", `${fit.fit_obs ?? ""} / ${fit.lookback ?? ""}`],
-    ["RankIC", fmtNum(fit.rank_ic_rolling, 4)],
-    ["DecileSpread", fmtNum(fit.decile_spread_rolling, 4)],
+    ["Payoff门控", fmtPct(risk.risk_gate), "策略自身最近已完成 Top5 批次支持的仓位比例。越低越说明近期收益证据不足。"],
+    ["10日净收益", fmtPct(gate.payoff_mean_net_10d), "最近窗口内 Top5 批次持有10日、扣20bps成本后的平均收益。"],
+    ["10日LCB", fmtPct(gate.payoff_lcb_net_10d), "保守下界。为负表示均值虽可能为正，但稳定性还不够，仓位应打折。"],
+    ["有效样本", fmtNum(gate.payoff_effective_obs, 1), "按10日持有重叠折算后的有效样本数，比原始日度样本更接近真实独立观察数。"],
+    ["HMM仓位", fmtPct(risk.hmm_exposure), "市场状态模块给出的仓位。为0时，即使候选股有分数也不新开仓。"],
+    ["fit方向", Number(fit.score_direction) < 0 ? "反向" : "正向", "冻结规则判断模型近期排序方向。反向表示近期高分组表现弱于低分组，分数已反向使用。"],
   ]);
 
   renderKv($("auditSummary"), [
-    ["执行红灯", tradeAudit.blocking_trade_issues ?? ""],
-    ["审计文件数", `${tradeAudit.trade_files ?? ""} trades / ${tradeAudit.daily_files ?? ""} daily`],
-    ["冻结参数", "40 / 15"],
-    ["敏感均值", fmtPct(sensitivity.mean_ann)],
-    ["敏感超额", fmtPct(sensitivity.mean_excess)],
-    ["最近年收益", latestYear.year ? `${latestYear.year}: ${fmtPct(latestYear.return)}` : ""],
-    ["最近年超额", fmtPct(latestYear.excess_return)],
+    ["执行红灯", tradeAudit.blocking_trade_issues ?? "", "交易审计发现的硬错误数量。大于0时不要直接按订单执行。"],
+    ["最近年收益", latestYear.year ? `${latestYear.year}: ${fmtPct(latestYear.return)}` : "", "冻结策略在最近测试年度的绝对收益，用来感知最近环境是否友好。"],
+    ["最近年超额", fmtPct(latestYear.excess_return), "相对中证1000基准的最近年度超额。比绝对收益更适合判断策略是否真有贡献。"],
   ]);
 
   $("auditLinks").innerHTML = (audit.files || [])
@@ -248,12 +266,22 @@ function renderShadowPortfolio(data) {
   const summary = data?.summary || {};
   const rows = data?.positions || [];
   const text = rows.length
-    ? `latest ${String(summary.latest_date || "").slice(0, 10)}；持仓 ${summary.position_count ?? 0}，已评估 ${summary.evaluated_count ?? 0}，待入场 ${summary.pending_count ?? 0}，阻塞 ${summary.blocked_count ?? 0}，平均收益 ${fmtPct(summary.avg_shadow_return)}，胜率 ${fmtPct(summary.win_rate)}`
+    ? `latest ${String(summary.latest_date || "").slice(0, 10)}；持仓 ${summary.position_count ?? 0}，卖出建议 ${summary.sell_count ?? 0}，已评估 ${summary.evaluated_count ?? 0}，待入场 ${summary.pending_count ?? 0}，阻塞 ${summary.blocked_count ?? 0}，平均收益 ${fmtPct(summary.avg_shadow_return)}，胜率 ${fmtPct(summary.win_rate)}`
     : "尚未加入影子持仓。";
   $("shadowSummary").textContent = text;
   $("shadowRows").innerHTML = rows.map((row) => {
     const ret = Number(row.shadow_return);
     const cls = Number.isFinite(ret) && ret < 0 ? "neg" : Number.isFinite(ret) && ret > 0 ? "pos" : "";
+    const id = String(row.id ?? "");
+    const isClosed = String(row.status ?? "OPEN") === "CLOSED";
+    const sellAction = row.sell_action || "";
+    const isSell = sellAction === "SELL";
+    const actions = id
+      ? `<div class="rowActions">
+          ${isClosed ? `<span class="mutedMini">已卖出</span>` : `<button class="miniBtn sellBtn" data-shadow-action="sell" data-position-id="${id}">卖出</button>`}
+          <button class="miniBtn dangerBtn" data-shadow-action="delete" data-position-id="${id}">删除</button>
+        </div>`
+      : "";
     return `
       <tr>
         <td>${row.ts_code ?? ""}</td>
@@ -265,10 +293,25 @@ function renderShadowPortfolio(data) {
         <td>${fmtNum(row.entry_raw_open, 2)}</td>
         <td>${fmtNum(row.mark_raw_close, 2)}</td>
         <td class="${cls}">${fmtPct(row.shadow_return)}</td>
-        <td class="reason">${row.eval_note ?? ""}</td>
+        <td><span class="badge ${isSell ? "sell" : "hold"}">${sellAction}</span></td>
+        <td class="reason">${row.sell_reason ?? ""}</td>
+        <td>${fmtNum(row.sell_impact_efficiency, 4)}</td>
+        <td>${fmtNum(row.sell_impact_deviation_60d, 4)}</td>
+        <td>${row.hazard_strict ? "触发" : ""}</td>
+        <td>${actions}</td>
       </tr>
     `;
   }).join("");
+}
+
+async function updateShadowPosition(positionId, action) {
+  if (!positionId) return;
+  if (action === "delete" && !confirm("删除这条影子持仓？此操作用于清理误触记录。")) return;
+  const data = await api(`/api/shadow-portfolio/${action}`, {
+    method: "POST",
+    body: JSON.stringify({ position_id: positionId }),
+  });
+  renderShadowPortfolio(data.portfolio);
 }
 
 async function refreshShadowPortfolio() {
@@ -321,6 +364,9 @@ function setBusy(isBusy) {
   $("sellAdviceBtn").disabled = isBusy;
   $("addShadowBtn").disabled = isBusy;
   $("refreshShadowBtn").disabled = isBusy;
+  document.querySelectorAll("[data-shadow-action]").forEach((button) => {
+    button.disabled = isBusy;
+  });
 }
 
 function startPolling(taskId) {
@@ -432,6 +478,36 @@ $("refreshShadowBtn").addEventListener("click", () => refreshShadowPortfolio().c
   $("taskMeta").textContent = "影子评估刷新失败";
   $("logs").textContent = String(err);
 }));
+
+document.addEventListener("click", (event) => {
+  const helpButton = event.target.closest(".helpDot");
+  if (helpButton) {
+    const nextOpen = !helpButton.classList.contains("isOpen");
+    closeHelpTips(helpButton);
+    helpButton.classList.toggle("isOpen", nextOpen);
+    helpButton.setAttribute("aria-expanded", String(nextOpen));
+    return;
+  }
+  if (!event.target.closest(".helpWrap")) {
+    closeHelpTips();
+  }
+});
+
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") closeHelpTips();
+});
+
+$("shadowRows").addEventListener("click", (event) => {
+  const button = event.target.closest("[data-shadow-action]");
+  if (!button || button.disabled) return;
+  setBusy(true);
+  updateShadowPosition(button.dataset.positionId, button.dataset.shadowAction)
+    .catch((err) => {
+      $("taskMeta").textContent = String(err);
+      $("logs").textContent = String(err);
+    })
+    .finally(() => setBusy(false));
+});
 
 initDates();
 refreshStatus().catch((err) => {

@@ -34,7 +34,7 @@ def main(run_dir: str) -> None:
             how="left",
         )
         buys = joined["side"].eq("BUY")
-        sells = joined["side"].eq("SELL")
+        sells = joined["side"].isin(["SELL", "EARLY_SELL", "RISK_SELL"])
         rows.append({
             "file": str(path.relative_to(run)),
             "trades": int(len(joined)),
@@ -103,4 +103,3 @@ if __name__ == "__main__":
     if len(sys.argv) != 2:
         raise SystemExit("usage: python scripts/atr_reversion_trade_audit.py RUN_DIR")
     main(sys.argv[1])
-

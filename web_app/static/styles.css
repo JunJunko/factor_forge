@@ -307,6 +307,46 @@ textarea {
   justify-content: flex-end;
 }
 
+.rowActions {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  white-space: nowrap;
+}
+
+.miniBtn {
+  min-height: 28px;
+  padding: 0 9px;
+  border-radius: 6px;
+  border: 1px solid #cfd7df;
+  background: #ffffff;
+  color: #34495e;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.miniBtn:disabled {
+  opacity: 0.55;
+  cursor: wait;
+}
+
+.sellBtn {
+  border-color: #b8dfc9;
+  color: #1e7d46;
+}
+
+.dangerBtn {
+  border-color: #f3c0bd;
+  color: #a93226;
+}
+
+.mutedMini {
+  color: #64707d;
+  font-size: 12px;
+}
+
 .muted {
   color: #64707d;
   font-size: 14px;
@@ -396,8 +436,96 @@ textarea {
 }
 
 .kv.compact {
-  grid-template-columns: 92px 1fr;
+  grid-template-columns: 104px minmax(0, 1fr);
   font-size: 13px;
+  row-gap: 9px;
+}
+
+.kv.compact dt {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  min-width: 0;
+  padding-right: 2px;
+}
+
+.helpWrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.helpDot {
+  display: inline-grid;
+  place-items: center;
+  width: 15px;
+  height: 15px;
+  flex: 0 0 15px;
+  padding: 0;
+  border: 1px solid #d3dbe3;
+  border-radius: 50%;
+  background: #f8fafc;
+  color: #70808f;
+  font: inherit;
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 1;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease, color 0.15s ease;
+}
+
+.helpDot:hover,
+.helpDot:focus-visible,
+.helpDot.isOpen {
+  border-color: #8eb6df;
+  background: #eef6ff;
+  color: #174f7f;
+  outline: none;
+}
+
+.helpTip {
+  position: absolute;
+  z-index: 20;
+  top: 24px;
+  left: -8px;
+  width: min(260px, calc(100vw - 48px));
+  padding: 10px 11px;
+  border: 1px solid #d9e1ea;
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 10px 28px rgba(28, 43, 59, 0.16);
+  color: #34495e;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.5;
+  text-align: left;
+  transform: translateY(-4px);
+  opacity: 0;
+  pointer-events: none;
+  visibility: hidden;
+  white-space: normal;
+}
+
+.helpTip::before {
+  content: "";
+  position: absolute;
+  top: -5px;
+  left: 12px;
+  width: 8px;
+  height: 8px;
+  border-top: 1px solid #d9e1ea;
+  border-left: 1px solid #d9e1ea;
+  background: #ffffff;
+  transform: rotate(45deg);
+}
+
+.helpDot.isOpen + .helpTip {
+  transform: translateY(0);
+  opacity: 1;
+  pointer-events: auto;
+  visibility: visible;
 }
 
 .warningList {

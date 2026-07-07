@@ -29,8 +29,8 @@ ATR_RUN_DIR = (
     / "atr_reversion_runs"
     / "atr_lower_shadow_reversion_v1_pit_liquidity_20260706T091843Z"
 )
-FROZEN_SENSITIVITY_DIR = ATR_RUN_DIR / "fit_quality_sensitivity_20260707T031019Z"
-FROZEN_AUDIT_DIR = FROZEN_SENSITIVITY_DIR / "frozen_rule_audit_lookback40_minobs15_cost20"
+FROZEN_SENSITIVITY_DIR = ATR_RUN_DIR / "event_badtrade_iteration_20260707T111609Z"
+FROZEN_AUDIT_DIR = FROZEN_SENSITIVITY_DIR
 LIVE_OPS_ROOT = ROOT / "artifacts" / "atr_reversion_live_ops"
 POSITION_STATE_PATH = LIVE_OPS_ROOT / "position_state.json"
 SHADOW_PORTFOLIO_PATH = LIVE_OPS_ROOT / "shadow_portfolio.json"
@@ -68,6 +68,12 @@ class DailyChainRequest(BaseModel):
 class ShadowAddRequest(BaseModel):
     signal_date: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
     ts_codes: list[str]
+
+
+class ShadowPositionActionRequest(BaseModel):
+    position_id: str
+    action_date: str | None = Field(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$")
+    note: str = ""
 
 
 def _task(status: str = "queued") -> tuple[str, dict[str, Any]]:
@@ -214,6 +220,60 @@ def _latest_data_status() -> dict[str, Any]:
     }
 
 
+def _latest_panel_signal_day_status(signal_date: pd.Timestamp) -> dict[str, Any]:
+    repo = _load_repo()
+    version, panel = repo.load_panel("latest")
+    panel["trade_date"] = pd.to_datetime(panel["trade_date"])
+    target = signal_date.normalize()
+    day = panel.loc[panel["trade_date"].eq(target)]
+    tradeable_rows = 0
+    if not day.empty and "is_tradeable" in day:
+        tradeable_rows = int(day["is_tradeable"].fillna(False).astype(bool).sum())
+    return {
+        "version": version,
+        "panel_end": panel["trade_date"].max().normalize() if len(panel) else pd.NaT,
+        "has_signal_date": not day.empty,
+        "rows": int(len(day)),
+        "tradeable_rows": tradeable_rows,
+    }
+
+
+def _ensure_signal_date_data(task_id: str, signal_date: str, merge_full_history: bool = True) -> dict[str, Any]:
+    signal_ts = pd.Timestamp(signal_date).normalize()
+    status = _latest_panel_signal_day_status(signal_ts)
+    if status["has_signal_date"] and status["tradeable_rows"] > 0:
+        _append_log(
+            task_id,
+            "[update_data] signal-date data ready "
+            f"version={status['version']} panel_end={status['panel_end'].date()} "
+            f"rows={status['rows']} tradeable_rows={status['tradeable_rows']}",
+        )
+        return _latest_data_status()
+
+    compact = signal_ts.strftime("%Y%m%d")
+    reason = (
+        "missing signal date"
+        if not status["has_signal_date"]
+        else f"signal date has no tradeable rows rows={status['rows']}"
+    )
+    _append_log(task_id, f"[update_data] auto-fill required for {signal_date}: {reason}")
+    data_status = _sync_data_inline(task_id, compact, compact, merge_full_history)
+    status = _latest_panel_signal_day_status(signal_ts)
+    if not status["has_signal_date"]:
+        raise RuntimeError(f"signal_date {signal_date} is still missing from latest panel after auto-fill")
+    if status["tradeable_rows"] <= 0:
+        raise RuntimeError(
+            f"signal_date {signal_date} has no tradeable rows after auto-fill "
+            f"(rows={status['rows']}, version={status['version']})"
+        )
+    _append_log(
+        task_id,
+        "[update_data] auto-fill verified "
+        f"version={status['version']} rows={status['rows']} tradeable_rows={status['tradeable_rows']}",
+    )
+    return data_status
+
+
 def _latest_signal_dir() -> Path | None:
     root = ROOT / "artifacts" / "atr_reversion_live_signals"
     if not root.exists():
@@ -271,27 +331,29 @@ def _read_json_file(path: Path) -> dict[str, Any] | None:
 
 
 def _frozen_sensitivity_row() -> dict[str, Any] | None:
-    path = FROZEN_SENSITIVITY_DIR / "sensitivity_summary.csv"
+    path = FROZEN_SENSITIVITY_DIR / "event_iteration_summary.csv"
     if not path.exists():
         return None
     try:
         data = pd.read_csv(path)
     except Exception:
         return None
-    row = data.loc[data["lookback"].eq(40) & data["min_obs"].eq(15)]
+    row = data.loc[data["variant"].eq("cluster_alpha_payoff_gate_top5")]
     if row.empty:
         return None
     return row.iloc[0].replace({np.nan: None}).to_dict()
 
 
 def _frozen_latest_year() -> dict[str, Any] | None:
-    path = FROZEN_AUDIT_DIR / "frozen_rule_year_summary.csv"
+    path = FROZEN_AUDIT_DIR / "event_iteration_yearly.csv"
     if not path.exists():
         return None
     try:
         data = pd.read_csv(path)
     except Exception:
         return None
+    if "variant" in data.columns:
+        data = data[data["variant"].eq("cluster_alpha_payoff_gate_top5")]
     if data.empty:
         return None
     return data.sort_values("year").iloc[-1].replace({np.nan: None}).to_dict()
@@ -325,10 +387,10 @@ def _build_dashboard(data_status: dict[str, Any], signal: dict[str, Any] | None)
     frozen_year = _frozen_latest_year()
     sensitivity = _frozen_sensitivity_row()
     files = [
-        _file_link(FROZEN_SENSITIVITY_DIR / "frozen_rule_final_report.md", "冻结规则中文报告"),
-        _file_link(FROZEN_SENSITIVITY_DIR / "report.md", "参数敏感性报告"),
+        _file_link(FROZEN_SENSITIVITY_DIR / "report.md", "事件版冻结策略报告"),
+        _file_link(FROZEN_SENSITIVITY_DIR / "oos_2025_2026_focus" / "report.md", "2025/2026 OOS重点报告"),
+        _file_link(FROZEN_SENSITIVITY_DIR / "event_iteration_summary.csv", "事件版策略矩阵汇总"),
         _file_link(FROZEN_SENSITIVITY_DIR / "trade_execution_audit.csv", "交易执行审计"),
-        _file_link(FROZEN_AUDIT_DIR / "report.md", "集中度审计报告"),
     ]
     display_status = "未生成" if not summary else ("观察" if final_exposure is not None and final_exposure <= 0.0 else "可执行")
     return {
@@ -435,10 +497,11 @@ def _compute_health(signal: dict[str, Any]) -> dict[str, Any]:
     else:
         components.append({"name": "fit_quality", "state": "MIXED", "reason": "方向指标不一致"})
 
+    gate_type = str(risk_inputs.get("gate_type") or "market_payoff_gate")
     if risk_gate <= 0:
-        components.append({"name": "defensive_gate", "state": "RISK_OFF", "reason": "risk_kill gate=0"})
+        components.append({"name": "payoff_gate", "state": "RISK_OFF", "reason": f"{gate_type}=0"})
     else:
-        components.append({"name": "defensive_gate", "state": "PASS", "reason": f"risk_gate={risk_gate:.2f}"})
+        components.append({"name": "payoff_gate", "state": "PASS", "reason": f"{gate_type}={risk_gate:.2f}"})
 
     if hmm_exposure <= 0:
         components.append({"name": "hmm_regime", "state": "RISK_OFF", "reason": "HMM exposure=0"})
@@ -469,6 +532,9 @@ def _compute_health(signal: dict[str, Any]) -> dict[str, Any]:
             "hmm_exposure": hmm_exposure,
             "final_exposure": final_exposure,
             "top5_excess_5round": _as_float(risk_inputs.get("top5_excess_5round")),
+            "payoff_mean_net_10d": _as_float(risk_inputs.get("payoff_mean_net_10d")),
+            "payoff_lcb_net_10d": _as_float(risk_inputs.get("payoff_lcb_net_10d")),
+            "payoff_effective_obs": _as_float(risk_inputs.get("payoff_effective_obs")),
         },
     }
 
@@ -725,6 +791,94 @@ def _add_shadow_positions(req: ShadowAddRequest) -> dict[str, Any]:
     return {"added": added, "missing": missing, "portfolio": evaluated}
 
 
+def _delete_shadow_position(req: ShadowPositionActionRequest) -> dict[str, Any]:
+    book = _load_shadow_portfolio()
+    before = len(book.get("positions", []))
+    kept = [p for p in book.get("positions", []) if str(p.get("id")) != req.position_id]
+    if len(kept) == before:
+        raise HTTPException(status_code=404, detail="shadow position not found")
+    book["positions"] = kept
+    book.setdefault("audit_log", []).append(
+        {
+            "action": "DELETE",
+            "position_id": req.position_id,
+            "note": req.note,
+            "at": datetime.now().isoformat(timespec="seconds"),
+        }
+    )
+    _save_shadow_portfolio(book)
+    return {"position_id": req.position_id, "portfolio": _evaluate_shadow_portfolio()}
+
+
+def _sell_shadow_position(req: ShadowPositionActionRequest) -> dict[str, Any]:
+    book = _load_shadow_portfolio()
+    pos = next((p for p in book.get("positions", []) if str(p.get("id")) == req.position_id), None)
+    if pos is None:
+        raise HTTPException(status_code=404, detail="shadow position not found")
+    if str(pos.get("status", "OPEN")) == "CLOSED":
+        raise HTTPException(status_code=400, detail="shadow position is already closed")
+
+    repo = _load_repo()
+    version, panel = repo.load_panel("latest")
+    panel["trade_date"] = pd.to_datetime(panel["trade_date"])
+    code = str(pos.get("ts_code"))
+    latest_date = panel["trade_date"].max().normalize()
+    action_date = pd.Timestamp(req.action_date).normalize() if req.action_date else latest_date
+    day = panel.loc[panel["trade_date"].eq(action_date) & panel["ts_code"].astype(str).eq(code)]
+    if day.empty:
+        raise HTTPException(status_code=404, detail=f"no market row for {code} on {action_date.date()}")
+    mark = day.iloc[-1]
+    if bool(mark.get("is_suspended", False)):
+        raise HTTPException(status_code=400, detail=f"{code} is suspended on {action_date.date()}")
+
+    sell_adj = _as_float(mark.get("adj_close"))
+    sell_raw = _as_float(mark.get("raw_close"))
+    entry_adj = _as_float(pos.get("entry_adj_open"))
+    entry_raw = _as_float(pos.get("entry_raw_open"))
+    entry_date = pos.get("entry_date")
+    if not np.isfinite(entry_adj):
+        evaluated = _evaluate_shadow_portfolio()
+        match = next((p for p in evaluated.get("positions", []) if str(p.get("id")) == req.position_id), None)
+        entry_adj = _as_float((match or {}).get("entry_adj_open"))
+        entry_raw = _as_float((match or {}).get("entry_raw_open"))
+        entry_date = (match or {}).get("entry_date")
+    if not np.isfinite(entry_adj):
+        raise HTTPException(status_code=400, detail="shadow position has no simulated entry fill to sell")
+    if entry_date and action_date < pd.Timestamp(entry_date).normalize():
+        raise HTTPException(status_code=400, detail="sell date is before simulated entry date")
+    realized_return = sell_adj / entry_adj - 1.0 if np.isfinite(entry_adj) and entry_adj else float("nan")
+
+    pos.update(
+        {
+            "status": "CLOSED",
+            "closed_at": datetime.now().isoformat(timespec="seconds"),
+            "entry_date": entry_date,
+            "entry_raw_open": entry_raw,
+            "entry_adj_open": entry_adj,
+            "exit_date": action_date,
+            "exit_raw_close": sell_raw,
+            "exit_adj_close": sell_adj,
+            "realized_return": realized_return,
+            "close_data_version": version,
+            "close_note": req.note,
+        }
+    )
+    book.setdefault("audit_log", []).append(
+        {
+            "action": "SELL",
+            "position_id": req.position_id,
+            "ts_code": code,
+            "action_date": action_date,
+            "exit_raw_close": sell_raw,
+            "realized_return": realized_return,
+            "note": req.note,
+            "at": datetime.now().isoformat(timespec="seconds"),
+        }
+    )
+    _save_shadow_portfolio(book)
+    return {"position": pos, "portfolio": _evaluate_shadow_portfolio()}
+
+
 def _evaluate_shadow_portfolio() -> dict[str, Any]:
     book = _load_shadow_portfolio()
     repo = _load_repo()
@@ -734,10 +888,35 @@ def _evaluate_shadow_portfolio() -> dict[str, Any]:
     latest_date = dates[-1] if dates else pd.NaT
     date_pos = {d.normalize(): i for i, d in enumerate(dates)}
     panel_idx = panel.set_index(["trade_date", "ts_code"], drop=False)
+    latest_signal = _signal_for_date(latest_date) if pd.notna(latest_date) else None
+    final_exposure = None
+    if latest_signal:
+        final_exposure = float(latest_signal["summary"].get("final_exposure", np.nan))
+    hazard = _sell_impact_hazard()
+    hazard_today = hazard[hazard["trade_date"].eq(latest_date)].set_index("ts_code") if pd.notna(latest_date) else pd.DataFrame()
     rows = []
     open_returns = []
     for pos in book.get("positions", []):
         row = dict(pos)
+        if str(pos.get("status", "OPEN")) == "CLOSED":
+            realized = _as_float(pos.get("realized_return"))
+            row.update(
+                {
+                    "mark_date": pos.get("exit_date"),
+                    "mark_raw_close": pos.get("exit_raw_close"),
+                    "mark_adj_close": pos.get("exit_adj_close"),
+                    "shadow_return": realized,
+                    "eval_status": "CLOSED",
+                    "eval_note": pos.get("close_note") or "closed shadow position",
+                    "sell_action": "CLOSED",
+                    "sell_reason": pos.get("close_note") or "closed shadow position",
+                    "sell_impact_efficiency": None,
+                    "sell_impact_deviation_60d": None,
+                    "hazard_strict": False,
+                }
+            )
+            rows.append(row)
+            continue
         signal_ts = pd.Timestamp(pos.get("signal_date")).normalize()
         signal_i = date_pos.get(signal_ts)
         if signal_i is None:
@@ -777,6 +956,21 @@ def _evaluate_shadow_portfolio() -> dict[str, Any]:
         mark_raw = _as_float(mark.get("raw_close"))
         ret = mark_adj / entry_adj - 1.0 if entry_adj and np.isfinite(entry_adj) and np.isfinite(mark_adj) else np.nan
         held_days = date_pos.get(pd.Timestamp(mark["trade_date"]).normalize(), entry_i) - entry_i + 1
+        hrow = hazard_today.loc[code] if code in hazard_today.index else pd.Series(dtype=object)
+        strict_hazard = bool(hrow.get("hazard_dev_q5_eff_q5", False))
+        sell_reasons = []
+        sell_action = "HOLD"
+        if final_exposure is not None and np.isfinite(final_exposure) and final_exposure <= 0:
+            sell_action = "SELL"
+            sell_reasons.append("final_exposure=0")
+        if held_days >= 10:
+            sell_action = "SELL"
+            sell_reasons.append("holding>=10d")
+        if strict_hazard:
+            sell_action = "SELL"
+            sell_reasons.append("sell_impact_hazard")
+        if not sell_reasons:
+            sell_reasons.append("no_sell_rule_triggered")
         row.update(
             {
                 "entry_date": entry_date,
@@ -788,6 +982,11 @@ def _evaluate_shadow_portfolio() -> dict[str, Any]:
                 "holding_trade_days": int(max(held_days, 0)),
                 "shadow_return": ret,
                 "eval_status": "OPEN_EVALUATED",
+                "sell_action": sell_action,
+                "sell_reason": "; ".join(sell_reasons),
+                "sell_impact_efficiency": None if pd.isna(hrow.get("sell_impact_efficiency", np.nan)) else float(hrow.get("sell_impact_efficiency")),
+                "sell_impact_deviation_60d": None if pd.isna(hrow.get("sell_impact_deviation_60d", np.nan)) else float(hrow.get("sell_impact_deviation_60d")),
+                "hazard_strict": strict_hazard,
                 "eval_note": "按下一交易日开盘模拟入场，按最新收盘估值",
             }
         )
@@ -798,9 +997,12 @@ def _evaluate_shadow_portfolio() -> dict[str, Any]:
         "data_version": version,
         "latest_date": latest_date,
         "position_count": len(rows),
+        "open_count": sum(1 for r in rows if str(r.get("status", "OPEN")) == "OPEN"),
+        "closed_count": sum(1 for r in rows if str(r.get("status", "OPEN")) == "CLOSED"),
         "evaluated_count": sum(1 for r in rows if r.get("eval_status") == "OPEN_EVALUATED"),
         "pending_count": sum(1 for r in rows if r.get("eval_status") == "PENDING_ENTRY"),
         "blocked_count": sum(1 for r in rows if r.get("eval_status") == "BLOCKED_BUY"),
+        "sell_count": sum(1 for r in rows if r.get("sell_action") == "SELL"),
         "avg_shadow_return": float(np.mean(open_returns)) if open_returns else None,
         "win_rate": float(np.mean([r > 0 for r in open_returns])) if open_returns else None,
         "updated_at": datetime.now().isoformat(timespec="seconds"),
@@ -1023,6 +1225,7 @@ def _sync_data_inline(task_id: str, start: str, end: str, merge_full_history: bo
 def _run_signal_task(task_id: str, req: SignalRequest) -> None:
     _set_task(task_id, status="running", started_at=datetime.now().isoformat(timespec="seconds"))
     try:
+        _ensure_signal_date_data(task_id, req.signal_date)
         rc = _run_subprocess(task_id, [sys.executable, "scripts/atr_reversion_live_signal_rolling2y.py", req.signal_date])
         if rc != 0:
             raise RuntimeError(f"signal generation failed with exit code {rc}")
@@ -1042,12 +1245,13 @@ def _run_signal_task(task_id: str, req: SignalRequest) -> None:
 
 def _generate_signal_inline(task_id: str, signal_date: str, force: bool = False) -> dict[str, Any]:
     _append_log(task_id, f"[generate_all_model_signals] signal_date={signal_date}")
-    _append_log(task_id, "[generate_all_model_signals] active production model: rolling_2y + HMM + risk_kill + frozen fit-quality flip")
+    _append_log(task_id, "[generate_all_model_signals] active production model: event_alpha_payoff_gate_top5_frozen_20260707")
     existing = _latest_signal_dir_for_date(pd.Timestamp(signal_date))
     if existing is not None and not force:
         signal = _read_signal(existing)
         _append_log(task_id, f"[generate_all_model_signals] reused existing run={signal.get('run_dir')}")
         return signal
+    _ensure_signal_date_data(task_id, signal_date)
     rc = _run_subprocess(task_id, [sys.executable, "scripts/atr_reversion_live_signal_rolling2y.py", signal_date])
     if rc != 0:
         raise RuntimeError(f"signal generation failed with exit code {rc}")
@@ -1161,6 +1365,16 @@ def shadow_portfolio() -> dict[str, Any]:
 @app.post("/api/shadow-portfolio/add")
 def shadow_portfolio_add(req: ShadowAddRequest) -> dict[str, Any]:
     return _json_ready(_add_shadow_positions(req))
+
+
+@app.post("/api/shadow-portfolio/sell")
+def shadow_portfolio_sell(req: ShadowPositionActionRequest) -> dict[str, Any]:
+    return _json_ready(_sell_shadow_position(req))
+
+
+@app.post("/api/shadow-portfolio/delete")
+def shadow_portfolio_delete(req: ShadowPositionActionRequest) -> dict[str, Any]:
+    return _json_ready(_delete_shadow_position(req))
 
 
 @app.get("/api/tasks/{task_id}")
