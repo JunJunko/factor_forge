@@ -29,10 +29,18 @@ def industry_slice_enabled(experiment) -> bool:
 
 
 class ExperimentRunner:
-    def run(self, experiment_path: str | Path, factor_path: str | Path | None = None) -> dict:
+    def run(
+        self,
+        experiment_path: str | Path,
+        factor_path: str | Path | None = None,
+        position_multiplier: pd.Series | None = None,
+        position_multiplier_source: str | None = None,
+    ) -> dict:
         experiment_path = Path(experiment_path)
         experiment_raw = load_yaml(experiment_path)
         experiment = load_experiment(experiment_path)
+        position_multiplier = self._normalize_position_multiplier(position_multiplier)
+        position_metadata = self._position_multiplier_metadata(position_multiplier, position_multiplier_source)
         project_path = Path(experiment.project_config)
         factor_path = Path(factor_path) if factor_path is not None else Path(experiment.factor_config)
         scoring_path = Path(experiment.scoring_config)
@@ -92,7 +100,7 @@ class ExperimentRunner:
         coverage_blockers = self._coverage_blockers(data_manifest, factor, experiment)
         run_id = self._run_id(
             factor.factor.name, data_version, factor_raw, experiment_raw, project_raw, scoring_raw,
-            backtest_contract_raw, conditioning_raw or {},
+            backtest_contract_raw, conditioning_raw or {}, position_metadata,
         )
         artifacts = RunArtifacts(project.paths.artifacts_root, run_id)
         started = datetime.now(timezone.utc)
@@ -104,6 +112,8 @@ class ExperimentRunner:
             "selection_metadata": {"selected_by": "fixed_protocol", "requires_oos_confirmation": True},
             "data_coverage_blockers": coverage_blockers,
         }
+        if position_metadata["enabled"]:
+            manifest["position_multiplier"] = position_metadata
         artifacts.yaml("inputs/factor.yaml", factor_raw)
         artifacts.yaml("inputs/experiment.yaml", experiment_raw)
         artifacts.yaml("inputs/project.yaml", project_raw)
@@ -111,6 +121,13 @@ class ExperimentRunner:
         artifacts.yaml("inputs/backtest_contract.yaml", backtest_contract_raw)
         if conditioning_raw is not None:
             artifacts.yaml("inputs/conditioning_factor.yaml", conditioning_raw)
+        if position_multiplier is not None:
+            stored_multiplier = position_multiplier.rename("position_multiplier").to_frame().reset_index()
+            stored_multiplier = stored_multiplier.rename(columns={stored_multiplier.columns[0]: "trade_date"})
+            artifacts.csv(
+                "inputs/position_multiplier.csv",
+                stored_multiplier,
+            )
         artifacts.json("manifest.json", manifest)
         scorer = AlphaScorer(scoring_raw)
         try:
@@ -336,6 +353,7 @@ class ExperimentRunner:
                                 cost_model=experiment.stage_l2.cost_model, cost_scenario_bps=cost,
                                 market_benchmark=market_benchmark,
                                 selection_membership=condition_memberships.get(universe),
+                                position_multiplier=position_multiplier,
                             )
                             condition_key = (
                                 "__condition_q" + "_".join(map(str, condition_filter.include_quantiles))
@@ -353,6 +371,7 @@ class ExperimentRunner:
                                 "universe": universe, "top_n": top_n, "holding_days": holding,
                                 "cost_bps": cost, "metrics": result.metrics, "daily": result.daily,
                                 "positions": result.positions,
+                                "position_multiplier": position_metadata["enabled"],
                                 "condition_quantiles": condition_filter.include_quantiles
                                 if condition_filter.enabled else None,
                             })
@@ -412,6 +431,41 @@ class ExperimentRunner:
             ).stdout.strip()
         except Exception:
             return "UNVERSIONED_WORKTREE"
+
+    @staticmethod
+    def _normalize_position_multiplier(multiplier: pd.Series | None) -> pd.Series | None:
+        if multiplier is None:
+            return None
+        if not isinstance(multiplier, pd.Series):
+            raise TypeError("position_multiplier must be a pandas Series indexed by trade_date")
+        result = multiplier.copy()
+        result.index = pd.to_datetime(result.index)
+        result = pd.to_numeric(result, errors="coerce").dropna().sort_index().clip(0.0, 1.0)
+        result = result.groupby(result.index).last()
+        if result.empty:
+            raise ValueError("position_multiplier is empty after parsing numeric values")
+        return result
+
+    @staticmethod
+    def _position_multiplier_metadata(multiplier: pd.Series | None, source: str | None) -> dict:
+        if multiplier is None:
+            return {"enabled": False}
+        values = multiplier.to_numpy(float)
+        payload = pd.DataFrame({
+            "trade_date": multiplier.index.strftime("%Y-%m-%d"),
+            "position_multiplier": values,
+        }).to_csv(index=False).encode()
+        return {
+            "enabled": True,
+            "source": source,
+            "rows": int(len(multiplier)),
+            "start_date": multiplier.index.min().date().isoformat(),
+            "end_date": multiplier.index.max().date().isoformat(),
+            "mean": float(np.mean(values)),
+            "min": float(np.min(values)),
+            "max": float(np.max(values)),
+            "sha256": hashlib.sha256(payload).hexdigest(),
+        }
 
     @staticmethod
     def _coverage_blockers(data_manifest, factor, experiment) -> list[str]:

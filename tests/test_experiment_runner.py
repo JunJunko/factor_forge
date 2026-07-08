@@ -121,3 +121,18 @@ def test_declarative_experiment_runs_without_factor_code_changes(tmp_path):
     conditioned_metrics = json.loads(first_metrics.read_text(encoding="utf-8"))
     assert conditioned_metrics["benchmark_scope"] == "condition_equal_weight"
     assert "annualized_excess_return_vs_universe" in conditioned_metrics
+
+    multiplier = pd.Series(0.5, index=dates[10:], name="position_multiplier")
+    timed_result = ExperimentRunner().run(
+        experiment_path,
+        position_multiplier=multiplier,
+        position_multiplier_source="unit-test",
+    )
+    assert timed_result["status"] == "SUCCESS"
+    timed_run_dir = Path(timed_result["run_dir"])
+    manifest = json.loads((timed_run_dir / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["position_multiplier"]["enabled"] is True
+    assert manifest["position_multiplier"]["source"] == "unit-test"
+    assert (timed_run_dir / "inputs" / "position_multiplier.csv").exists()
+    l2_summary = json.loads((timed_run_dir / "l2_summary.json").read_text(encoding="utf-8"))
+    assert {row["position_multiplier"] for row in l2_summary} == {True}

@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import time
 from datetime import datetime, timezone
+from pathlib import Path
 
 import pandas as pd
 import requests
@@ -18,7 +19,7 @@ ENDPOINTS = [
 
 class TushareProvider:
     def __init__(self, token: str | None = None):
-        load_dotenv()
+        load_dotenv(Path.cwd() / ".env")
         token = token or os.getenv("TUSHARE_TOKEN")
         if not token:
             raise RuntimeError("TUSHARE_TOKEN is not set")

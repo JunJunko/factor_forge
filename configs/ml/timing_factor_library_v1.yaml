@@ -1,0 +1,43 @@
+version: 1
+name: timing_factor_library_v1
+inputs:
+  index_daily: data/timing/index_daily.parquet
+  stock_daily: data/timing/stock_daily.parquet
+  index_dailybasic: data/timing/index_dailybasic.parquet
+  bond_yield: data/timing/bond_yield.parquet
+  margin: data/timing/margin.parquet
+  option_basic: data/timing/option_basic.parquet
+  option_daily: data/timing/option_daily.parquet
+  # If provided, this is used directly; otherwise the builder tries to infer ATM IV.
+  option_iv_daily: null
+  futures_basic: data/timing/futures_basic.parquet
+  futures_daily: data/timing/futures_daily.parquet
+  futures_holding: data/timing/futures_holding.parquet
+  moneyflow: data/timing/moneyflow.parquet
+  cpi: data/timing/cpi.parquet
+  pmi: data/timing/pmi.parquet
+  epu: data/timing/epu.parquet
+features:
+  index_code: 000300.SH
+  benchmark_code: null
+  future_prefix: IF
+  fallback_bond_10y_yield: 0.025
+  horizon: 20
+  horizons: [5, 10, 20]
+  data_lag: 1
+  z_window: 252
+  pct_window: 756
+  change_windows: [5, 20, 60]
+  boll_windows: [20, 60]
+  basis_roll_days: 5
+  option_min_days_to_expiry: 7
+  option_atm_moneyness: 0.05
+  option_min_amount: 0.0
+  option_price_field: close
+  option_risk_free_rate: 0.02
+  iv_bounds: [0.01, 1.50]
+  z_clip: 3.0
+  pct_clip: [0.01, 0.99]
+  extreme_low: [0.05, 0.10]
+  extreme_high: [0.90, 0.95]
+output_dir: artifacts/timing_features

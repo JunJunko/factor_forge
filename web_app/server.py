@@ -34,6 +34,12 @@ FROZEN_AUDIT_DIR = FROZEN_SENSITIVITY_DIR
 LIVE_OPS_ROOT = ROOT / "artifacts" / "atr_reversion_live_ops"
 POSITION_STATE_PATH = LIVE_OPS_ROOT / "position_state.json"
 SHADOW_PORTFOLIO_PATH = LIVE_OPS_ROOT / "shadow_portfolio.json"
+SIGNAL_ROOT = ROOT / "artifacts" / "sell_impact_ranker_live_signals"
+LEGACY_SIGNAL_ROOT = ROOT / "artifacts" / "atr_reversion_live_signals"
+ACTIVE_SIGNAL_SCRIPT = "scripts/sell_impact_ranker_live_signal.py"
+ACTIVE_SIGNAL_ALGORITHM = "sell_impact_regime_cluster_ranker_direct_top_v1"
+LIVE_SYNC_SCRIPT = "scripts/live_data_timing_sync.py"
+LIVE_SYNC_SUMMARY_PATH = ROOT / "artifacts" / "timing_position_models" / "latest_live_sync_summary.json"
 
 
 app = FastAPI(title="Factor Forge Control Panel")
@@ -217,6 +223,32 @@ def _latest_data_status() -> dict[str, Any]:
         "row_count": manifest.get("row_count"),
         "source": manifest.get("source"),
         "complete": _is_complete_manifest(manifest),
+        "timing_position": _latest_timing_position_status(),
+    }
+
+
+def _latest_timing_position_status() -> dict[str, Any] | None:
+    root = ROOT / "artifacts" / "timing_position_models"
+    if not root.exists():
+        return None
+    candidates = [p for p in root.glob("timing_position_model_v1_*/timing_position_daily.csv") if p.is_file()]
+    if not candidates:
+        return None
+    path = max(candidates, key=lambda p: p.stat().st_mtime)
+    try:
+        data = pd.read_csv(path, parse_dates=["trade_date"])
+    except Exception:
+        return {"path": _rel(path), "error": "failed_to_read"}
+    if data.empty:
+        return {"path": _rel(path), "rows": 0}
+    row = data.sort_values("trade_date").iloc[-1]
+    return {
+        "path": _rel(path),
+        "rows": int(len(data)),
+        "latest_date": row["trade_date"],
+        "target_position": _as_float(row.get("target_position")),
+        "raw_position": _as_float(row.get("raw_position")),
+        "prediction": _as_float(row.get("prediction")),
     }
 
 
@@ -275,14 +307,21 @@ def _ensure_signal_date_data(task_id: str, signal_date: str, merge_full_history:
 
 
 def _latest_signal_dir() -> Path | None:
-    root = ROOT / "artifacts" / "atr_reversion_live_signals"
-    if not root.exists():
-        return None
+    root = SIGNAL_ROOT
     dirs = [
         p
         for p in root.iterdir()
-        if p.is_dir() and (p / "signal_summary.json").exists() and (p / "top_recommendations.csv").exists()
-    ]
+        if root.exists()
+        and p.is_dir()
+        and (p / "signal_summary.json").exists()
+        and (p / "top_recommendations.csv").exists()
+    ] if root.exists() else []
+    if not dirs and LEGACY_SIGNAL_ROOT.exists():
+        dirs = [
+            p
+            for p in LEGACY_SIGNAL_ROOT.iterdir()
+            if p.is_dir() and (p / "signal_summary.json").exists() and (p / "top_recommendations.csv").exists()
+        ]
     return max(dirs, key=lambda p: p.stat().st_mtime) if dirs else None
 
 
@@ -295,13 +334,28 @@ def _read_signal(run_dir: Path) -> dict[str, Any]:
     top = pd.read_csv(top_path).replace({np.nan: None})
     return {
         "run_dir": str(run_dir.relative_to(ROOT)),
+        "algorithm": summary.get("signal_algorithm") or summary.get("algorithm"),
+        "signal_date": summary.get("signal_date"),
         "summary": summary,
         "top": top.to_dict("records"),
         "files": {
             "summary": str(summary_path.relative_to(ROOT)),
             "top_recommendations": str(top_path.relative_to(ROOT)),
-            "top100_candidates": str((run_dir / "top100_candidates.csv").relative_to(ROOT)),
-            "run_log": str((run_dir / "run.log").relative_to(ROOT)),
+            **(
+                {"top100_candidates": str((run_dir / "top100_candidates.csv").relative_to(ROOT))}
+                if (run_dir / "top100_candidates.csv").exists()
+                else {}
+            ),
+            **(
+                {"report": str((run_dir / "report.md").relative_to(ROOT))}
+                if (run_dir / "report.md").exists()
+                else {}
+            ),
+            **(
+                {"run_log": str((run_dir / "run.log").relative_to(ROOT))}
+                if (run_dir / "run.log").exists()
+                else {}
+            ),
         },
     }
 
@@ -359,6 +413,13 @@ def _frozen_latest_year() -> dict[str, Any] | None:
     return data.sort_values("year").iloc[-1].replace({np.nan: None}).to_dict()
 
 
+def _latest_named_dir(root: Path, pattern: str) -> Path | None:
+    if not root.exists():
+        return None
+    dirs = [p for p in root.glob(pattern) if p.is_dir()]
+    return max(dirs, key=lambda p: p.stat().st_mtime) if dirs else None
+
+
 def _build_dashboard(data_status: dict[str, Any], signal: dict[str, Any] | None) -> dict[str, Any]:
     summary = (signal or {}).get("summary") or {}
     top = (signal or {}).get("top") or []
@@ -386,7 +447,12 @@ def _build_dashboard(data_status: dict[str, Any], signal: dict[str, Any] | None)
     trade_audit = _read_json_file(FROZEN_SENSITIVITY_DIR / "trade_audit_summary.json") or {}
     frozen_year = _frozen_latest_year()
     sensitivity = _frozen_sensitivity_row()
+    ranker_audit_dir = _latest_named_dir(ROOT / "artifacts" / "strategy_reviews", "sell_impact_ranker_trade_audit_*")
+    ranker_compare_dir = _latest_named_dir(ROOT / "artifacts" / "strategy_reviews", "sell_impact_ranker_timing_compare_*")
     files = [
+        _file_link(ranker_audit_dir / "report.md", "Sell-impact ranker交易审计") if ranker_audit_dir else None,
+        _file_link(ranker_audit_dir / "trade_execution_audit.csv", "Sell-impact逐笔审计CSV") if ranker_audit_dir else None,
+        _file_link(ranker_compare_dir / "report.md", "Ranker direct/top score-band + timing对比") if ranker_compare_dir else None,
         _file_link(FROZEN_SENSITIVITY_DIR / "report.md", "事件版冻结策略报告"),
         _file_link(FROZEN_SENSITIVITY_DIR / "oos_2025_2026_focus" / "report.md", "2025/2026 OOS重点报告"),
         _file_link(FROZEN_SENSITIVITY_DIR / "event_iteration_summary.csv", "事件版策略矩阵汇总"),
@@ -476,6 +542,35 @@ def _json_default(obj):
 
 def _compute_health(signal: dict[str, Any]) -> dict[str, Any]:
     summary = signal.get("summary") or {}
+    if str(summary.get("signal_algorithm") or "") == ACTIVE_SIGNAL_ALGORITHM:
+        final_exposure = _as_float(summary.get("final_exposure"))
+        timing = summary.get("timing_model") or {}
+        overall = "HEALTHY" if np.isfinite(final_exposure) and final_exposure > 0 else "RISK_OFF"
+        return {
+            "signal_date": str(summary.get("signal_date", ""))[:10],
+            "overall": overall,
+            "components": [
+                {
+                    "name": "ranker_direct_top",
+                    "state": "PASS",
+                    "reason": "validated regime-aware cluster ranker direct-top selector",
+                },
+                {
+                    "name": "timing_position",
+                    "state": "FULL" if final_exposure >= 0.95 else ("REDUCED" if final_exposure > 0 else "RISK_OFF"),
+                    "reason": f"target_position={final_exposure:.2f}" if np.isfinite(final_exposure) else "target_position missing",
+                },
+            ],
+            "metrics": {
+                "final_exposure": final_exposure,
+                "target_position": _as_float(summary.get("target_position")),
+                "predictable_candidates": summary.get("predictable_candidates"),
+                "train_rows": summary.get("train_rows"),
+                "valid_rows": summary.get("valid_rows"),
+                "timing_date": timing.get("timing_date"),
+                "timing_fallback_reason": timing.get("fallback_reason"),
+            },
+        }
     fit = summary.get("fit_quality") or {}
     risk_inputs = summary.get("risk_gate_inputs") or {}
     rank_ic = _as_float(fit.get("rank_ic_rolling"))
@@ -704,7 +799,7 @@ def _render_shadow_markdown(report: dict[str, Any]) -> str:
     health = report["health"]
     audit = report["execution_audit"]
     lines = [
-        "# ATR Reversion Daily Shadow Report",
+        "# Sell Impact Ranker Daily Shadow Report",
         "",
         f"- 信号日：{state.get('signal_date')}",
         f"- 仓位状态：{state.get('state')}",
@@ -1056,20 +1151,20 @@ def _sell_impact_hazard() -> pd.DataFrame:
 
 
 def _signal_for_date(signal_date: pd.Timestamp) -> dict[str, Any] | None:
-    root = ROOT / "artifacts" / "atr_reversion_live_signals"
-    if not root.exists():
-        return None
     candidates = []
-    for run_dir in root.iterdir():
-        summary_path = run_dir / "signal_summary.json"
-        if not summary_path.exists():
+    for root in [SIGNAL_ROOT, LEGACY_SIGNAL_ROOT]:
+        if not root.exists():
             continue
-        try:
-            summary = json.loads(summary_path.read_text(encoding="utf-8"))
-        except Exception:
-            continue
-        if pd.Timestamp(summary.get("signal_date")).normalize() == signal_date.normalize():
-            candidates.append((run_dir.stat().st_mtime, summary, run_dir))
+        for run_dir in root.iterdir():
+            summary_path = run_dir / "signal_summary.json"
+            if not summary_path.exists():
+                continue
+            try:
+                summary = json.loads(summary_path.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            if pd.Timestamp(summary.get("signal_date")).normalize() == signal_date.normalize():
+                candidates.append((run_dir.stat().st_mtime, summary, run_dir))
     if not candidates:
         return None
     _mtime, summary, run_dir = max(candidates, key=lambda item: item[0])
@@ -1077,21 +1172,21 @@ def _signal_for_date(signal_date: pd.Timestamp) -> dict[str, Any] | None:
 
 
 def _latest_signal_dir_for_date(signal_date: pd.Timestamp) -> Path | None:
-    root = ROOT / "artifacts" / "atr_reversion_live_signals"
-    if not root.exists():
-        return None
     candidates: list[tuple[float, Path]] = []
-    for run_dir in root.iterdir():
-        summary_path = run_dir / "signal_summary.json"
-        top_path = run_dir / "top_recommendations.csv"
-        if not summary_path.exists() or not top_path.exists():
+    for root in [SIGNAL_ROOT, LEGACY_SIGNAL_ROOT]:
+        if not root.exists():
             continue
-        try:
-            summary = json.loads(summary_path.read_text(encoding="utf-8"))
-            if pd.Timestamp(summary.get("signal_date")).normalize() == signal_date.normalize():
-                candidates.append((run_dir.stat().st_mtime, run_dir))
-        except Exception:
-            continue
+        for run_dir in root.iterdir():
+            summary_path = run_dir / "signal_summary.json"
+            top_path = run_dir / "top_recommendations.csv"
+            if not summary_path.exists() or not top_path.exists():
+                continue
+            try:
+                summary = json.loads(summary_path.read_text(encoding="utf-8"))
+                if pd.Timestamp(summary.get("signal_date")).normalize() == signal_date.normalize():
+                    candidates.append((run_dir.stat().st_mtime, run_dir))
+            except Exception:
+                continue
     if not candidates:
         return None
     return max(candidates, key=lambda item: item[0])[1]
@@ -1194,31 +1289,72 @@ def _run_sync_task(task_id: str, req: SyncRequest) -> None:
         _set_task(task_id, status="failed", finished_at=datetime.now().isoformat(timespec="seconds"), error=str(exc))
 
 
+def _compact_sync_summary(summary: dict[str, Any]) -> dict[str, Any]:
+    if not summary:
+        return {}
+    panel = summary.get("panel_gap_before") or {}
+    data = summary.get("data") or {}
+    margin = summary.get("margin") or {}
+    stock = summary.get("stock_daily") or {}
+    timing = summary.get("timing_position") or {}
+    return {
+        "requested_start": summary.get("requested_start"),
+        "requested_end": summary.get("requested_end"),
+        "target_open_dates": summary.get("target_open_dates") or [],
+        "required_dates": panel.get("required_dates") or [],
+        "panel_missing_dates": panel.get("missing_dates") or [],
+        "date_rows": panel.get("date_rows") or [],
+        "data_skipped": bool(data.get("skipped")),
+        "data_missing_dates": data.get("missing_dates") or [],
+        "timing_required_date": summary.get("timing_required_date"),
+        "timing_input_dates": summary.get("timing_input_dates") or [],
+        "margin_missing_dates": margin.get("missing_dates") or [],
+        "margin_skipped": bool(margin.get("skipped")),
+        "stock_missing_dates": stock.get("missing_dates") or [],
+        "stock_skipped": bool(stock.get("skipped")),
+        "timing_skipped": bool(timing.get("skipped")),
+        "timing_latest": (timing.get("latest") or {}).get("trade_date"),
+        "timing_target_position": (timing.get("latest") or {}).get("target_position"),
+    }
+
+
 def _sync_data_inline(task_id: str, start: str, end: str, merge_full_history: bool) -> dict[str, Any]:
     _append_log(task_id, f"[update_data] start={start} end={end}")
-    rc = _run_subprocess(
-        task_id,
-        [
-            sys.executable,
-            "-m",
-            "factor_forge.cli",
-            "data",
-            "ingest",
-            "--config",
-            "configs/project.yaml",
-            "--start",
-            start,
-            "--end",
-            end,
-        ],
-    )
+    args = [
+        sys.executable,
+        LIVE_SYNC_SCRIPT,
+        "--start",
+        start,
+        "--end",
+        end,
+        "--output-json",
+        str(LIVE_SYNC_SUMMARY_PATH.relative_to(ROOT)),
+    ]
+    if not merge_full_history:
+        args.append("--no-merge-full-history")
+    rc = _run_subprocess(task_id, args)
     if rc != 0:
-        raise RuntimeError(f"data ingest failed with exit code {rc}")
+        raise RuntimeError(f"live data/timing sync failed with exit code {rc}")
     status = _latest_data_status()
-    if merge_full_history and not status["complete"]:
-        status["version"] = _append_increment_to_complete(task_id, status["version"])
-        status = _latest_data_status()
-    _append_log(task_id, f"[update_data] done version={status.get('version')} end={status.get('end_date')}")
+    sync_summary = _compact_sync_summary(_read_json_file(LIVE_SYNC_SUMMARY_PATH) or {})
+    if sync_summary:
+        status["sync_summary"] = sync_summary
+        _append_log(
+            task_id,
+            "[update_data] coverage "
+            f"panel_missing={sync_summary.get('panel_missing_dates')} "
+            f"data_skipped={sync_summary.get('data_skipped')} "
+            f"timing_required={sync_summary.get('timing_required_date')} "
+            f"timing_skipped={sync_summary.get('timing_skipped')}",
+        )
+    timing = status.get("timing_position") or {}
+    _append_log(
+        task_id,
+        "[update_data] done "
+        f"version={status.get('version')} end={status.get('end_date')} "
+        f"timing_date={str(timing.get('latest_date', ''))[:10]} "
+        f"target_position={timing.get('target_position')}",
+    )
     return status
 
 
@@ -1226,10 +1362,10 @@ def _run_signal_task(task_id: str, req: SignalRequest) -> None:
     _set_task(task_id, status="running", started_at=datetime.now().isoformat(timespec="seconds"))
     try:
         _ensure_signal_date_data(task_id, req.signal_date)
-        rc = _run_subprocess(task_id, [sys.executable, "scripts/atr_reversion_live_signal_rolling2y.py", req.signal_date])
+        rc = _run_subprocess(task_id, [sys.executable, ACTIVE_SIGNAL_SCRIPT, req.signal_date])
         if rc != 0:
             raise RuntimeError(f"signal generation failed with exit code {rc}")
-        run_dir = _latest_signal_dir()
+        run_dir = _latest_signal_dir_for_date(pd.Timestamp(req.signal_date)) or _latest_signal_dir()
         if run_dir is None:
             raise RuntimeError("No signal output directory found.")
         _set_task(
@@ -1245,17 +1381,17 @@ def _run_signal_task(task_id: str, req: SignalRequest) -> None:
 
 def _generate_signal_inline(task_id: str, signal_date: str, force: bool = False) -> dict[str, Any]:
     _append_log(task_id, f"[generate_all_model_signals] signal_date={signal_date}")
-    _append_log(task_id, "[generate_all_model_signals] active production model: event_alpha_payoff_gate_top5_frozen_20260707")
+    _append_log(task_id, f"[generate_all_model_signals] active production model: {ACTIVE_SIGNAL_ALGORITHM}")
     existing = _latest_signal_dir_for_date(pd.Timestamp(signal_date))
     if existing is not None and not force:
         signal = _read_signal(existing)
         _append_log(task_id, f"[generate_all_model_signals] reused existing run={signal.get('run_dir')}")
         return signal
     _ensure_signal_date_data(task_id, signal_date)
-    rc = _run_subprocess(task_id, [sys.executable, "scripts/atr_reversion_live_signal_rolling2y.py", signal_date])
+    rc = _run_subprocess(task_id, [sys.executable, ACTIVE_SIGNAL_SCRIPT, signal_date])
     if rc != 0:
         raise RuntimeError(f"signal generation failed with exit code {rc}")
-    run_dir = _latest_signal_dir()
+    run_dir = _latest_signal_dir_for_date(pd.Timestamp(signal_date)) or _latest_signal_dir()
     if run_dir is None:
         raise RuntimeError("No signal output directory found.")
     signal = _read_signal(run_dir)

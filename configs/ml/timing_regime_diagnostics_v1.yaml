@@ -1,0 +1,57 @@
+version: 1
+name: timing_regime_diagnostics_v1
+dataset_path: artifacts/timing_features/timing_factor_library_v1_20260708T014309Z_d4522a5b/timing_dataset.parquet
+feature_names_path: artifacts/timing_features/timing_factor_library_v1_20260708T014309Z_d4522a5b/feature_names.json
+output_root: artifacts/timing_regime
+start_date: "2023-04-18"
+label_column: label_20d_excess_return
+label_columns:
+  - label_5d_excess_return
+  - label_10d_excess_return
+  - label_20d_excess_return
+
+regime_features:
+  - index_ret_20d
+  - index_ret_60d
+  - index_vol_20d
+  - index_drawdown_60d
+  - up_ratio
+  - rzmre_ratio
+  - put_call_log
+  - iv_atm
+  - fut_near_basis_ann
+  - fut_ls_log
+  - pmi
+  - epu_log
+
+regime:
+  method: hmm
+  n_components: 3
+  covariance_type: diag
+  history_days: 252
+  refit_frequency: monthly
+  zscore_window: 252
+  zscore_min_periods: 60
+  random_state: 42
+  max_iterations: 300
+  tolerance: 0.0001
+  min_covar: 0.0001
+
+diagnostics:
+  min_coverage: 0.55
+  quantiles: 5
+  top_curve_factors: 30
+  exclude_patterns:
+    - "_low_"
+    - "_high_"
+    - "label_"
+    - "state_probability_"
+
+interaction_model:
+  enabled: true
+  model_type: ridge
+  alpha: 1.0
+  l1_ratio: 0.2
+  train_end: "2025-06-30"
+  test_start: "2025-07-01"
+  max_features: 20

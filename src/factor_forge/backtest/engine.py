@@ -136,9 +136,9 @@ class BacktestEngine:
                     multiplier = 1.0
                     if position_multiplier is not None:
                         if isinstance(position_multiplier, pd.Series):
-                            multiplier = float(position_multiplier.get(signal_date, 1.0))
+                            multiplier = float(position_multiplier.get(date, 1.0))
                         else:
-                            multiplier = float(position_multiplier.get(signal_date, 1.0))
+                            multiplier = float(position_multiplier.get(date, 1.0))
                         multiplier = float(np.clip(multiplier, 0.0, 1.0))
                     deployable_cash = sleeve.cash * multiplier
                     target = deployable_cash / top_n if top_n else 0.0

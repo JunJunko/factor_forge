@@ -62,7 +62,7 @@ def test_position_multiplier_only_scales_new_entries():
     factor = panel[["trade_date", "ts_code"]].copy()
     factor["factor_value"] = 1.0
     multiplier = pd.Series(
-        [0.5, 0.0, 0.0, 0.0], index=pd.to_datetime(panel["trade_date"].unique())
+        [0.0, 0.5, 0.0, 0.0], index=pd.to_datetime(panel["trade_date"].unique())
     )
     result = BacktestEngine().run(
         panel, factor, universe="liquid", top_n=1, holding_days=2,
@@ -74,6 +74,8 @@ def test_position_multiplier_only_scales_new_entries():
     )
     buys = result.trades[result.trades.side == "BUY"]
     assert len(buys) == 1
+    assert buys.iloc[0]["signal_date"] == pd.Timestamp("2024-01-02")
+    assert buys.iloc[0]["trade_date"] == pd.Timestamp("2024-01-03")
     assert buys.iloc[0]["gross_value"] == pytest.approx(25_000)
     assert result.daily.loc[result.daily.trade_date == pd.Timestamp("2024-01-04"),
                             "gross_exposure"].iloc[0] == pytest.approx(25_000)

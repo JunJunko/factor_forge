@@ -41,6 +41,46 @@ def value_ml_run(path: Path):
     typer.echo(json.dumps(result, ensure_ascii=False, indent=2, default=json_default))
 
 
+@ml_app.command("timing-build")
+def timing_build(path: Path):
+    """Build daily market-timing ML features from local Tushare-style tables."""
+    from factor_forge.timing.runner import TimingDatasetBuildRunner
+    result = TimingDatasetBuildRunner().run(path)
+    typer.echo(json.dumps(result, ensure_ascii=False, indent=2, default=json_default))
+
+
+@ml_app.command("timing-regime")
+def timing_regime(path: Path):
+    """Run timing HMM/GMM regime diagnostics and regime-factor interaction model."""
+    from factor_forge.timing.regime import TimingRegimeRunner
+    result = TimingRegimeRunner().run(path)
+    typer.echo(json.dumps(result, ensure_ascii=False, indent=2, default=json_default))
+
+
+@ml_app.command("timing-regime-grid")
+def timing_regime_grid(path: Path):
+    """Run timing HMM/GMM regime parameter stability grid."""
+    from factor_forge.timing.regime import TimingRegimeGridRunner
+    result = TimingRegimeGridRunner().run(path)
+    typer.echo(json.dumps(result, ensure_ascii=False, indent=2, default=json_default))
+
+
+@ml_app.command("timing-stable-factors")
+def timing_stable_factors(path: Path):
+    """Select stable timing factors across fixed-regime random seeds."""
+    from factor_forge.timing.stable_factors import StableFactorSelectionRunner
+    result = StableFactorSelectionRunner().run(path)
+    typer.echo(json.dumps(result, ensure_ascii=False, indent=2, default=json_default))
+
+
+@ml_app.command("timing-position-model")
+def timing_position_model(path: Path):
+    """Train a regime-aware timing position model and backtest daily exposure."""
+    from factor_forge.timing.position_model import TimingPositionModelRunner
+    result = TimingPositionModelRunner().run(path)
+    typer.echo(json.dumps(result, ensure_ascii=False, indent=2, default=json_default))
+
+
 @ml_app.command("value-diagnostics")
 def value_diagnostics(path: Path):
     """Run portfolio, decile and price-vs-full diagnostics for a value model."""
@@ -144,6 +184,41 @@ def ingest_fundamentals(
     typer.echo(json.dumps(result.__dict__, ensure_ascii=False, indent=2, default=json_default))
 
 
+@data_app.command("timing-ingest")
+def timing_ingest(
+    start: str = typer.Option(..., help="YYYYMMDD"),
+    end: str = typer.Option(..., help="YYYYMMDD"),
+    index_code: str = typer.Option("000300.SH", help="Timing target index"),
+    config: Path = typer.Option(Path("configs/project.yaml")),
+    data_version: str = typer.Option("latest", help="Stock panel version for market breadth"),
+    output_dir: Path = typer.Option(Path("data/timing")),
+    overwrite: bool = typer.Option(False, help="Overwrite existing timing parquet files"),
+    include_options: bool = typer.Option(True, help="Fetch opt_basic/opt_daily"),
+    include_futures: bool = typer.Option(True, help="Fetch fut_basic/fut_daily/fut_holding"),
+    include_moneyflow: bool = typer.Option(True, help="Fetch moneyflow_mkt_dc when permitted"),
+):
+    """Fetch Tushare-style raw tables for the timing factor library."""
+    from factor_forge.timing.ingestion import TushareTimingIngestor
+
+    def progress(stage: str, done: int, total: int, detail: str) -> None:
+        typer.echo(f"timing-ingest {stage} {done}/{total}: {detail}")
+
+    result = TushareTimingIngestor(
+        TushareProvider(), output_dir=output_dir, progress=progress
+    ).ingest(
+        start_date=start,
+        end_date=end,
+        index_code=index_code,
+        project_config=config,
+        data_version=data_version,
+        include_options=include_options,
+        include_futures=include_futures,
+        include_moneyflow=include_moneyflow,
+        overwrite=overwrite,
+    )
+    typer.echo(json.dumps(result.__dict__, ensure_ascii=False, indent=2, default=json_default))
+
+
 @factor_app.command("validate")
 def factor_validate(path: Path):
     spec = load_factor(path)
@@ -154,6 +229,51 @@ def factor_validate(path: Path):
 def experiment_run(path: Path):
     result = ExperimentRunner().run(path)
     typer.echo(json.dumps(result, ensure_ascii=False, indent=2, default=json_default))
+
+
+@experiment_app.command("run-with-timing")
+def experiment_run_with_timing(
+    path: Path,
+    timing_daily: Path = typer.Option(..., "--timing-daily", help="timing_position_daily.csv, parquet, or its run directory"),
+    factor: Path | None = typer.Option(None, "--factor", help="Override factor YAML, same as root run --factor"),
+    position_column: str = typer.Option("target_position", "--position-column", help="Column used as entry cash multiplier"),
+    date_column: str = typer.Option("trade_date", "--date-column", help="Trading date column in timing daily file"),
+):
+    multiplier = _load_position_multiplier(timing_daily, position_column, date_column)
+    result = ExperimentRunner().run(
+        path,
+        factor_path=factor,
+        position_multiplier=multiplier,
+        position_multiplier_source=str(timing_daily),
+    )
+    typer.echo(json.dumps(result, ensure_ascii=False, indent=2, default=json_default))
+
+
+def _load_position_multiplier(path: Path, position_column: str, date_column: str) -> pd.Series:
+    source = Path(path)
+    if source.is_dir():
+        source = source / "timing_position_daily.csv"
+    if not source.exists():
+        raise typer.BadParameter(f"timing daily file does not exist: {source}")
+    if source.suffix.lower() == ".parquet":
+        frame = pd.read_parquet(source)
+    else:
+        frame = pd.read_csv(source)
+    missing = {date_column, position_column} - set(frame.columns)
+    if missing:
+        raise typer.BadParameter(
+            f"timing daily file missing columns: {', '.join(sorted(missing))}; "
+            f"available={', '.join(map(str, frame.columns))}"
+        )
+    multiplier = pd.Series(
+        pd.to_numeric(frame[position_column], errors="coerce").to_numpy(),
+        index=pd.to_datetime(frame[date_column]),
+        name="position_multiplier",
+    )
+    multiplier = multiplier.dropna().sort_index().clip(0.0, 1.0)
+    if multiplier.empty:
+        raise typer.BadParameter("position multiplier is empty after parsing")
+    return multiplier
 
 
 @app.command("run")

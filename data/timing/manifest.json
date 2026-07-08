@@ -1,0 +1,221 @@
+{
+  "start_date": "20260707",
+  "end_date": "20260707",
+  "index_code": "000300.SH",
+  "files": {
+    "index_daily": {
+      "path": "data\\timing\\index_daily.parquet",
+      "rows": 2551,
+      "columns": [
+        "ts_code",
+        "trade_date",
+        "close",
+        "open",
+        "high",
+        "low",
+        "pre_close",
+        "change",
+        "pct_chg",
+        "vol",
+        "amount"
+      ],
+      "date_range": {
+        "start": "2016-01-04",
+        "end": "2026-07-07"
+      },
+      "status": "SKIPPED"
+    },
+    "index_dailybasic": {
+      "path": "data\\timing\\index_dailybasic.parquet",
+      "rows": 2551,
+      "columns": [
+        "ts_code",
+        "trade_date",
+        "total_mv",
+        "float_mv",
+        "total_share",
+        "float_share",
+        "free_share",
+        "turnover_rate",
+        "turnover_rate_f",
+        "pe",
+        "pe_ttm",
+        "pb"
+      ],
+      "date_range": {
+        "start": "2016-01-04",
+        "end": "2026-07-07"
+      },
+      "status": "SKIPPED"
+    },
+    "bond_yield": {
+      "path": "data\\timing\\bond_yield.parquet",
+      "rows": 0,
+      "columns": [],
+      "date_range": null,
+      "status": "SKIPPED"
+    },
+    "margin": {
+      "path": "data\\timing\\margin.parquet",
+      "rows": 5923,
+      "columns": [
+        "trade_date",
+        "exchange_id",
+        "rzye",
+        "rzmre",
+        "rzche",
+        "rqye",
+        "rqmcl",
+        "rzrqye",
+        "rqyl"
+      ],
+      "date_range": {
+        "start": "2016-01-04",
+        "end": "2026-07-06"
+      },
+      "status": "SKIPPED"
+    },
+    "cpi": {
+      "path": "data\\timing\\cpi.parquet",
+      "rows": 125,
+      "columns": [
+        "month",
+        "nt_val",
+        "nt_yoy",
+        "nt_mom",
+        "nt_accu",
+        "town_val",
+        "town_yoy",
+        "town_mom",
+        "town_accu",
+        "cnt_val",
+        "cnt_yoy",
+        "cnt_mom",
+        "cnt_accu",
+        "available_date"
+      ],
+      "date_range": null,
+      "status": "SKIPPED"
+    },
+    "pmi": {
+      "path": "data\\timing\\pmi.parquet",
+      "rows": 125,
+      "columns": [
+        "PMI010801",
+        "PMI020402",
+        "PMI021000",
+        "CREATE_TIME",
+        "PMI020500",
+        "PMI020502",
+        "PMI020602",
+        "PMI020700",
+        "PMI010400",
+        "PMI010502",
+        "PMI011400",
+        "CREATE_BY",
+        "UPDATE_TIME",
+        "PMI010300",
+        "PMI010401",
+        "PMI010402",
+        "PMI010501",
+        "PMI010503",
+        "PMI012000",
+        "PMI020302",
+        "PMI020601",
+        "PMI020401",
+        "MONTH",
+        "PMI010603",
+        "PMI010701",
+        "PMI010703",
+        "PMI010802",
+        "PMI020101",
+        "PMI010100",
+        "PMI010700",
+        "PMI011000",
+        "PMI010000",
+        "PMI011100",
+        "PMI020301",
+        "PMI020800",
+        "ID",
+        "PMI010600",
+        "PMI010601",
+        "PMI020501",
+        "PMI010200",
+        "PMI010500",
+        "PMI010803",
+        "PMI011700",
+        "PMI020102",
+        "UPDATE_BY",
+        "PMI010602",
+        "PMI010800",
+        "PMI020202",
+        "PMI020300",
+        "PMI011200",
+        "PMI020100",
+        "PMI020600",
+        "PMI010900",
+        "PMI011600",
+        "PMI011800",
+        "PMI020201",
+        "PMI020400",
+        "PMI010702",
+        "PMI011500",
+        "PMI011900",
+        "PMI010403",
+        "PMI011300",
+        "PMI020200",
+        "PMI030000",
+        "PMI020900",
+        "available_date"
+      ],
+      "date_range": null,
+      "status": "SKIPPED"
+    },
+    "stock_daily": {
+      "path": "data\\timing\\stock_daily.parquet",
+      "rows": 11104343,
+      "columns": [
+        "trade_date",
+        "ts_code",
+        "adj_close",
+        "pre_close",
+        "amount_cny",
+        "is_tradeable",
+        "is_liquid",
+        "pct_chg",
+        "amount"
+      ],
+      "date_range": {
+        "start": "2016-01-04",
+        "end": "2026-07-07"
+      },
+      "status": "SKIPPED"
+    },
+    "moneyflow": {
+      "path": "data\\timing\\moneyflow.parquet",
+      "rows": 780,
+      "columns": [
+        "trade_date",
+        "close_sh",
+        "pct_change_sh",
+        "close_sz",
+        "pct_change_sz",
+        "net_amount",
+        "net_amount_rate",
+        "buy_elg_amount",
+        "buy_elg_amount_rate",
+        "buy_lg_amount",
+        "buy_lg_amount_rate",
+        "buy_md_amount",
+        "buy_md_amount_rate",
+        "buy_sm_amount",
+        "buy_sm_amount_rate"
+      ],
+      "date_range": {
+        "start": "2023-04-17",
+        "end": "2026-07-07"
+      },
+      "status": "SKIPPED"
+    }
+  }
+}

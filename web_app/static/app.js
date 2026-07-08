@@ -278,8 +278,8 @@ function renderShadowPortfolio(data) {
     const isSell = sellAction === "SELL";
     const actions = id
       ? `<div class="rowActions">
-          ${isClosed ? `<span class="mutedMini">已卖出</span>` : `<button class="miniBtn sellBtn" data-shadow-action="sell" data-position-id="${id}">卖出</button>`}
-          <button class="miniBtn dangerBtn" data-shadow-action="delete" data-position-id="${id}">删除</button>
+          ${isClosed ? `<span class="mutedMini">已卖出</span>` : `<button class="miniBtn sellBtn" data-shadow-action="sell" data-position-id="${id}" onclick="handleShadowAction(event, 'sell', '${id}')">卖出</button>`}
+          <button class="miniBtn dangerBtn" data-shadow-action="delete" data-position-id="${id}" onclick="handleShadowAction(event, 'delete', '${id}')">删除</button>
         </div>`
       : "";
     return `
@@ -312,6 +312,19 @@ async function updateShadowPosition(positionId, action) {
     body: JSON.stringify({ position_id: positionId }),
   });
   renderShadowPortfolio(data.portfolio);
+  $("taskMeta").textContent = action === "delete" ? "已删除影子持仓。" : "已卖出影子持仓。";
+}
+
+function handleShadowAction(event, action, positionId) {
+  event.preventDefault();
+  event.stopPropagation();
+  setBusy(true);
+  updateShadowPosition(positionId, action)
+    .catch((err) => {
+      $("taskMeta").textContent = String(err);
+      $("logs").textContent = String(err);
+    })
+    .finally(() => setBusy(false));
 }
 
 async function refreshShadowPortfolio() {
@@ -334,11 +347,14 @@ async function addSelectedToShadow() {
 
 async function refreshStatus() {
   const data = await api("/api/status");
+  const timing = data.data?.timing_position || {};
   renderKv($("dataStatus"), [
     ["版本", data.data?.version],
     ["范围", `${data.data?.start_date ?? ""} ~ ${data.data?.end_date ?? ""}`],
     ["行数", data.data?.row_count?.toLocaleString?.() ?? data.data?.row_count],
     ["完整面板", data.data?.complete ? "是" : "否"],
+    ["Timing date", timing.latest_date ? String(timing.latest_date).slice(0, 10) : ""],
+    ["Timing position", Number.isFinite(Number(timing.target_position)) ? fmtPct(timing.target_position) : ""],
   ]);
   const summary = data.latest_signal?.summary;
   const defaultSignalDate = data.default_signal_date || data.data?.end_date || (summary?.signal_date ? String(summary.signal_date).slice(0, 10) : "");
@@ -500,13 +516,7 @@ document.addEventListener("keydown", (event) => {
 $("shadowRows").addEventListener("click", (event) => {
   const button = event.target.closest("[data-shadow-action]");
   if (!button || button.disabled) return;
-  setBusy(true);
-  updateShadowPosition(button.dataset.positionId, button.dataset.shadowAction)
-    .catch((err) => {
-      $("taskMeta").textContent = String(err);
-      $("logs").textContent = String(err);
-    })
-    .finally(() => setBusy(false));
+  handleShadowAction(event, button.dataset.shadowAction, button.dataset.positionId);
 });
 
 initDates();

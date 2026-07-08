@@ -1,0 +1,195 @@
+{
+  "start_date": "20250102",
+  "end_date": "20250110",
+  "index_code": "000300.SH",
+  "files": {
+    "index_daily": {
+      "path": "data\\timing_smoke\\index_daily.parquet",
+      "rows": 7,
+      "columns": [
+        "ts_code",
+        "trade_date",
+        "close",
+        "open",
+        "high",
+        "low",
+        "pre_close",
+        "change",
+        "pct_chg",
+        "vol",
+        "amount"
+      ],
+      "date_range": {
+        "start": "2025-01-02",
+        "end": "2025-01-10"
+      },
+      "status": "SAVED"
+    },
+    "index_dailybasic": {
+      "path": "data\\timing_smoke\\index_dailybasic.parquet",
+      "rows": 7,
+      "columns": [
+        "ts_code",
+        "trade_date",
+        "total_mv",
+        "float_mv",
+        "total_share",
+        "float_share",
+        "free_share",
+        "turnover_rate",
+        "turnover_rate_f",
+        "pe",
+        "pe_ttm",
+        "pb"
+      ],
+      "date_range": {
+        "start": "2025-01-02",
+        "end": "2025-01-10"
+      },
+      "status": "SAVED"
+    },
+    "bond_yield": {
+      "path": "data\\timing_smoke\\bond_yield.parquet",
+      "rows": 0,
+      "columns": [],
+      "date_range": null,
+      "status": "SAVED"
+    },
+    "margin": {
+      "path": "data\\timing_smoke\\margin.parquet",
+      "rows": 21,
+      "columns": [
+        "trade_date",
+        "exchange_id",
+        "rzye",
+        "rzmre",
+        "rzche",
+        "rqye",
+        "rqmcl",
+        "rzrqye",
+        "rqyl"
+      ],
+      "date_range": {
+        "start": "2025-01-02",
+        "end": "2025-01-10"
+      },
+      "status": "SAVED"
+    },
+    "cpi": {
+      "path": "data\\timing_smoke\\cpi.parquet",
+      "rows": 1,
+      "columns": [
+        "month",
+        "nt_val",
+        "nt_yoy",
+        "nt_mom",
+        "nt_accu",
+        "town_val",
+        "town_yoy",
+        "town_mom",
+        "town_accu",
+        "cnt_val",
+        "cnt_yoy",
+        "cnt_mom",
+        "cnt_accu",
+        "available_date"
+      ],
+      "date_range": null,
+      "status": "SAVED"
+    },
+    "pmi": {
+      "path": "data\\timing_smoke\\pmi.parquet",
+      "rows": 1,
+      "columns": [
+        "PMI020501",
+        "PMI010100",
+        "PMI010300",
+        "PMI010400",
+        "PMI010803",
+        "PMI011100",
+        "PMI020402",
+        "PMI010701",
+        "PMI020202",
+        "PMI020500",
+        "PMI020601",
+        "PMI010501",
+        "PMI011300",
+        "PMI011400",
+        "PMI012000",
+        "ID",
+        "PMI011000",
+        "PMI011200",
+        "PMI011600",
+        "PMI020100",
+        "PMI020101",
+        "PMI020301",
+        "PMI010503",
+        "PMI010602",
+        "PMI010603",
+        "PMI010900",
+        "PMI011700",
+        "PMI020302",
+        "PMI020602",
+        "PMI010200",
+        "PMI010600",
+        "PMI010601",
+        "PMI020102",
+        "CREATE_BY",
+        "PMI010401",
+        "PMI010800",
+        "PMI020300",
+        "PMI020600",
+        "PMI020900",
+        "PMI030000",
+        "PMI010500",
+        "PMI011500",
+        "PMI011900",
+        "PMI010000",
+        "PMI010402",
+        "PMI010403",
+        "PMI010801",
+        "PMI020800",
+        "CREATE_TIME",
+        "UPDATE_BY",
+        "MONTH",
+        "PMI011800",
+        "PMI010702",
+        "PMI020401",
+        "PMI020201",
+        "PMI020400",
+        "PMI020502",
+        "PMI010700",
+        "PMI020200",
+        "PMI020700",
+        "PMI010802",
+        "PMI010502",
+        "PMI010703",
+        "PMI021000",
+        "UPDATE_TIME",
+        "available_date"
+      ],
+      "date_range": null,
+      "status": "SAVED"
+    },
+    "stock_daily": {
+      "path": "data\\timing_smoke\\stock_daily.parquet",
+      "rows": 37709,
+      "columns": [
+        "trade_date",
+        "ts_code",
+        "adj_close",
+        "pre_close",
+        "amount_cny",
+        "is_tradeable",
+        "is_liquid",
+        "pct_chg",
+        "amount"
+      ],
+      "date_range": {
+        "start": "2025-01-02",
+        "end": "2025-01-10"
+      },
+      "status": "SAVED"
+    }
+  }
+}

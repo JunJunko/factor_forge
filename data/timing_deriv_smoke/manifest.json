@@ -1,0 +1,342 @@
+{
+  "start_date": "20250102",
+  "end_date": "20250103",
+  "index_code": "000300.SH",
+  "files": {
+    "index_daily": {
+      "path": "data\\timing_deriv_smoke\\index_daily.parquet",
+      "rows": 2,
+      "columns": [
+        "ts_code",
+        "trade_date",
+        "close",
+        "open",
+        "high",
+        "low",
+        "pre_close",
+        "change",
+        "pct_chg",
+        "vol",
+        "amount"
+      ],
+      "date_range": {
+        "start": "2025-01-02",
+        "end": "2025-01-03"
+      },
+      "status": "SAVED"
+    },
+    "index_dailybasic": {
+      "path": "data\\timing_deriv_smoke\\index_dailybasic.parquet",
+      "rows": 2,
+      "columns": [
+        "ts_code",
+        "trade_date",
+        "total_mv",
+        "float_mv",
+        "total_share",
+        "float_share",
+        "free_share",
+        "turnover_rate",
+        "turnover_rate_f",
+        "pe",
+        "pe_ttm",
+        "pb"
+      ],
+      "date_range": {
+        "start": "2025-01-02",
+        "end": "2025-01-03"
+      },
+      "status": "SAVED"
+    },
+    "bond_yield": {
+      "path": "data\\timing_deriv_smoke\\bond_yield.parquet",
+      "rows": 0,
+      "columns": [],
+      "date_range": null,
+      "status": "SAVED"
+    },
+    "margin": {
+      "path": "data\\timing_deriv_smoke\\margin.parquet",
+      "rows": 6,
+      "columns": [
+        "trade_date",
+        "exchange_id",
+        "rzye",
+        "rzmre",
+        "rzche",
+        "rqye",
+        "rqmcl",
+        "rzrqye",
+        "rqyl"
+      ],
+      "date_range": {
+        "start": "2025-01-02",
+        "end": "2025-01-03"
+      },
+      "status": "SAVED"
+    },
+    "cpi": {
+      "path": "data\\timing_deriv_smoke\\cpi.parquet",
+      "rows": 1,
+      "columns": [
+        "month",
+        "nt_val",
+        "nt_yoy",
+        "nt_mom",
+        "nt_accu",
+        "town_val",
+        "town_yoy",
+        "town_mom",
+        "town_accu",
+        "cnt_val",
+        "cnt_yoy",
+        "cnt_mom",
+        "cnt_accu",
+        "available_date"
+      ],
+      "date_range": null,
+      "status": "SAVED"
+    },
+    "pmi": {
+      "path": "data\\timing_deriv_smoke\\pmi.parquet",
+      "rows": 1,
+      "columns": [
+        "PMI010300",
+        "PMI010503",
+        "PMI020200",
+        "PMI020302",
+        "PMI020500",
+        "PMI020700",
+        "CREATE_BY",
+        "PMI010402",
+        "PMI010800",
+        "PMI010802",
+        "PMI020300",
+        "PMI020601",
+        "UPDATE_TIME",
+        "UPDATE_BY",
+        "PMI011700",
+        "PMI020401",
+        "ID",
+        "MONTH",
+        "PMI010603",
+        "PMI011000",
+        "PMI020100",
+        "CREATE_TIME",
+        "PMI010400",
+        "PMI010500",
+        "PMI010803",
+        "PMI011300",
+        "PMI011800",
+        "PMI010100",
+        "PMI010702",
+        "PMI020402",
+        "PMI010000",
+        "PMI010601",
+        "PMI010700",
+        "PMI010801",
+        "PMI010900",
+        "PMI011100",
+        "PMI020201",
+        "PMI020501",
+        "PMI011400",
+        "PMI011900",
+        "PMI020400",
+        "PMI020600",
+        "PMI020800",
+        "PMI010602",
+        "PMI011200",
+        "PMI010501",
+        "PMI010502",
+        "PMI011600",
+        "PMI020202",
+        "PMI020301",
+        "PMI021000",
+        "PMI011500",
+        "PMI020502",
+        "PMI020602",
+        "PMI010200",
+        "PMI010401",
+        "PMI010703",
+        "PMI020101",
+        "PMI010403",
+        "PMI010600",
+        "PMI020102",
+        "PMI020900",
+        "PMI010701",
+        "PMI012000",
+        "PMI030000",
+        "available_date"
+      ],
+      "date_range": null,
+      "status": "SAVED"
+    },
+    "stock_daily": {
+      "path": "data\\timing_deriv_smoke\\stock_daily.parquet",
+      "rows": 10772,
+      "columns": [
+        "trade_date",
+        "ts_code",
+        "adj_close",
+        "pre_close",
+        "amount_cny",
+        "is_tradeable",
+        "is_liquid",
+        "pct_chg",
+        "amount"
+      ],
+      "date_range": {
+        "start": "2025-01-02",
+        "end": "2025-01-03"
+      },
+      "status": "SAVED"
+    },
+    "option_basic": {
+      "path": "data\\timing_deriv_smoke\\option_basic.parquet",
+      "rows": 29688,
+      "columns": [
+        "ts_code",
+        "symbol",
+        "exchange",
+        "name",
+        "per_unit",
+        "opt_code",
+        "opt_type",
+        "call_put",
+        "exercise_type",
+        "exercise_price",
+        "opt_multiplier",
+        "s_month",
+        "maturity_date",
+        "list_price",
+        "list_date",
+        "delist_date",
+        "last_edate",
+        "last_ddate",
+        "quote_unit",
+        "min_price_chg"
+      ],
+      "date_range": null,
+      "status": "SAVED"
+    },
+    "option_daily": {
+      "path": "data\\timing_deriv_smoke\\option_daily.parquet",
+      "rows": 30000,
+      "columns": [
+        "ts_code",
+        "trade_date",
+        "exchange",
+        "pre_settle",
+        "pre_close",
+        "open",
+        "high",
+        "low",
+        "close",
+        "settle",
+        "vol",
+        "amount",
+        "oi"
+      ],
+      "date_range": {
+        "start": "2025-01-02",
+        "end": "2025-01-03"
+      },
+      "status": "SAVED"
+    },
+    "futures_basic": {
+      "path": "data\\timing_deriv_smoke\\futures_basic.parquet",
+      "rows": 676,
+      "columns": [
+        "ts_code",
+        "symbol",
+        "exchange",
+        "name",
+        "fut_code",
+        "multiplier",
+        "trade_unit",
+        "per_unit",
+        "quote_unit",
+        "quote_unit_desc",
+        "d_mode_desc",
+        "list_date",
+        "delist_date",
+        "d_month",
+        "last_ddate"
+      ],
+      "date_range": null,
+      "status": "SAVED"
+    },
+    "futures_daily": {
+      "path": "data\\timing_deriv_smoke\\futures_daily.parquet",
+      "rows": 128,
+      "columns": [
+        "ts_code",
+        "trade_date",
+        "pre_close",
+        "pre_settle",
+        "open",
+        "high",
+        "low",
+        "close",
+        "settle",
+        "change1",
+        "change2",
+        "vol",
+        "amount",
+        "oi",
+        "oi_chg"
+      ],
+      "date_range": {
+        "start": "2025-01-02",
+        "end": "2025-01-03"
+      },
+      "status": "SAVED"
+    },
+    "futures_holding": {
+      "path": "data\\timing_deriv_smoke\\futures_holding.parquet",
+      "rows": 1297,
+      "columns": [
+        "trade_date",
+        "symbol",
+        "broker",
+        "vol",
+        "vol_chg",
+        "long_hld",
+        "long_chg",
+        "short_hld",
+        "short_chg"
+      ],
+      "date_range": {
+        "start": "2025-01-02",
+        "end": "2025-01-03"
+      },
+      "status": "SAVED"
+    },
+    "moneyflow": {
+      "path": "data\\timing_deriv_smoke\\moneyflow.parquet",
+      "rows": 2,
+      "columns": [
+        "trade_date",
+        "close_sh",
+        "pct_change_sh",
+        "close_sz",
+        "pct_change_sz",
+        "net_amount",
+        "net_amount_rate",
+        "buy_elg_amount",
+        "buy_elg_amount_rate",
+        "buy_lg_amount",
+        "buy_lg_amount_rate",
+        "buy_md_amount",
+        "buy_md_amount_rate",
+        "buy_sm_amount",
+        "buy_sm_amount_rate"
+      ],
+      "date_range": {
+        "start": "2025-01-02",
+        "end": "2025-01-03"
+      },
+      "status": "SAVED"
+    }
+  }
+}

@@ -1,0 +1,37 @@
+version: 1
+name: timing_position_model_v1
+dataset_path: artifacts/timing_features/timing_factor_library_v1_20260708T014309Z_d4522a5b/timing_dataset.parquet
+feature_names_path: artifacts/timing_features/timing_factor_library_v1_20260708T014309Z_d4522a5b/feature_names.json
+stable_factors_path: artifacts/timing_stable_factors/timing_stable_factors_v1_20260708T023309Z_a711cb61/stable_factor_selected.csv
+output_root: artifacts/timing_position_models
+start_date: "2023-04-18"
+label_column: label_10d_excess_return
+horizon_days: 10
+train_end: "2025-06-30"
+test_start: "2025-07-01"
+model:
+  model_type: ridge
+  alpha: 5.0
+  l1_ratio: 0.2
+mapping:
+  quantiles: [0.2, 0.4, 0.6, 0.8]
+  positions: [0.0, 0.25, 0.5, 0.75, 1.0]
+  max_daily_position_change: 0.25
+  transaction_cost_bps: 3.0
+regime_method: hmm
+n_components: 3
+history_days: 252
+random_state: 42
+regime_features:
+  - index_ret_20d
+  - index_ret_60d
+  - index_vol_20d
+  - index_drawdown_60d
+  - up_ratio
+  - rzmre_ratio
+  - put_call_log
+  - iv_atm
+  - fut_near_basis_ann
+  - fut_ls_log
+  - pmi
+  - epu_log
