@@ -37,7 +37,7 @@ SHADOW_PORTFOLIO_PATH = LIVE_OPS_ROOT / "shadow_portfolio.json"
 SIGNAL_ROOT = ROOT / "artifacts" / "sell_impact_ranker_live_signals"
 LEGACY_SIGNAL_ROOT = ROOT / "artifacts" / "atr_reversion_live_signals"
 ACTIVE_SIGNAL_SCRIPT = "scripts/sell_impact_ranker_live_signal.py"
-ACTIVE_SIGNAL_ALGORITHM = "sell_impact_regime_cluster_ranker_direct_top_v1"
+ACTIVE_SIGNAL_ALGORITHM = "sell_impact_cluster_low_vol_ranker_direct_top_v2"
 LIVE_SYNC_SCRIPT = "scripts/live_data_timing_sync.py"
 LIVE_SYNC_SUMMARY_PATH = ROOT / "artifacts" / "timing_position_models" / "latest_live_sync_summary.json"
 
@@ -553,7 +553,7 @@ def _compute_health(signal: dict[str, Any]) -> dict[str, Any]:
                 {
                     "name": "ranker_direct_top",
                     "state": "PASS",
-                    "reason": "validated regime-aware cluster ranker direct-top selector",
+                    "reason": "validated cluster_stock_state + low_vol ranker direct-top selector",
                 },
                 {
                     "name": "timing_position",
@@ -1385,8 +1385,15 @@ def _generate_signal_inline(task_id: str, signal_date: str, force: bool = False)
     existing = _latest_signal_dir_for_date(pd.Timestamp(signal_date))
     if existing is not None and not force:
         signal = _read_signal(existing)
-        _append_log(task_id, f"[generate_all_model_signals] reused existing run={signal.get('run_dir')}")
-        return signal
+        existing_algo = str((signal.get("summary") or {}).get("signal_algorithm") or "")
+        if existing_algo == ACTIVE_SIGNAL_ALGORITHM:
+            _append_log(task_id, f"[generate_all_model_signals] reused existing run={signal.get('run_dir')}")
+            return signal
+        _append_log(
+            task_id,
+            "[generate_all_model_signals] existing signal uses old algorithm "
+            f"{existing_algo or 'UNKNOWN'}, regenerating with {ACTIVE_SIGNAL_ALGORITHM}",
+        )
     _ensure_signal_date_data(task_id, signal_date)
     rc = _run_subprocess(task_id, [sys.executable, ACTIVE_SIGNAL_SCRIPT, signal_date])
     if rc != 0:

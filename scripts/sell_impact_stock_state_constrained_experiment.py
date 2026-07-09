@@ -12,30 +12,29 @@ import pandas as pd
 import sell_impact_ranker_timing_compare as timing_compare
 import sell_impact_score_band_walkforward as wf
 import sell_impact_sorting_repair as base
-from factor_forge.backtest import BacktestEngine
-from factor_forge.config import CostModel, ExecutionConstraints
 
 
 SOURCE_RUN = Path("artifacts/strategy_reviews/sell_impact_score_band_walkforward_20260708T091419Z")
 OUTPUT_ROOT = Path("artifacts/strategy_reviews")
-MODEL_VARIANT = "regime_aware_cluster_ranker"
 TOP_N = 5
 HOLDING_DAYS = 10
 COST_BPS = 20
 INITIAL_CASH = 1_000_000
 LOT_SIZE = 100
 
+LOW_VOL_REGIME_KEEP = ["market_ret_20", "market_ret_60"]
 
 VARIANTS = {
-    "A_original_cluster_stock_state": "原cluster_stock_state",
-    "B_low_vol_only": "只拆出low_vol",
-    "C_low_vol_plus_size": "low_vol + size",
-    "D_low_vol_size_regime_interaction": "low_vol + size + regime interaction",
+    "A_original_cluster_stock_state": "old mean cluster_stock_state",
+    "D_unconstrained_low_vol_size_interaction": "split low_vol + size + all interactions",
+    "E_constrained_low_vol_size_guard": "low_vol alpha + microcap risk guard + limited low_vol interactions",
+    "F_soft_low_vol_microcap_guard": "low_vol alpha + microcap risk guard without hard monotone constraints",
+    "G_low_vol_limited_interaction": "low_vol alpha + limited low_vol interactions, no size input",
 }
 
 
 def main() -> None:
-    output = OUTPUT_ROOT / f"sell_impact_stock_state_refactor_{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}"
+    output = OUTPUT_ROOT / f"sell_impact_stock_state_constrained_{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}"
     output.mkdir(parents=True, exist_ok=False)
     log_path = output / "run.log"
     t0 = time.time()
@@ -46,17 +45,16 @@ def main() -> None:
         with log_path.open("a", encoding="utf-8") as handle:
             handle.write(line + "\n")
 
-    log("loading dataset/panel")
+    log("loading source walk-forward dataset and panel")
     dataset = load_dataset(log)
     version, panel = base.load_panel()
     panel["trade_date"] = pd.to_datetime(panel["trade_date"])
     market_benchmark = timing_compare.load_market_benchmark(version)
     position_multiplier = timing_compare.load_position_multiplier(timing_compare.TIMING_DAILY)
 
-    log("validating new factors")
-    factor_validation = validate_new_factors(dataset, output)
+    log("validating constrained stock-state factors")
+    factor_validation = validate_factors(dataset, output)
 
-    feature_map_rows: list[pd.DataFrame] = []
     training_rows: list[dict[str, Any]] = []
     ic_rows: list[dict[str, Any]] = []
     yearly_ic_rows: list[dict[str, Any]] = []
@@ -64,19 +62,27 @@ def main() -> None:
     importance_rows: list[pd.DataFrame] = []
     contribution_rows: list[pd.DataFrame] = []
     prediction_frames: list[pd.DataFrame] = []
+    feature_map_rows: list[pd.DataFrame] = []
 
     for variant in VARIANTS:
         features = features_for_variant(dataset, variant)
         fmap = build_feature_map(features, variant)
         feature_map_rows.append(fmap)
-        log(f"variant={variant} features={len(features)}")
+        constrained = variant == "E_constrained_low_vol_size_guard"
+        log(f"variant={variant} features={len(features)} constrained={constrained}")
         for fold in wf.FOLDS:
             fold_name = fold["fold"]
-            train = base.sample_slice(dataset, fold["train_start"], fold["train_end"], features).sort_values(["trade_date", "ts_code"])
-            valid = base.sample_slice(dataset, fold["valid_start"], fold["valid_end"], features).sort_values(["trade_date", "ts_code"])
-            test = base.sample_slice(dataset, fold["test_start"], fold["test_end"], features).sort_values(["trade_date", "ts_code"])
+            train = base.sample_slice(dataset, fold["train_start"], fold["train_end"], features).sort_values(
+                ["trade_date", "ts_code"]
+            )
+            valid = base.sample_slice(dataset, fold["valid_start"], fold["valid_end"], features).sort_values(
+                ["trade_date", "ts_code"]
+            )
+            test = base.sample_slice(dataset, fold["test_start"], fold["test_end"], features).sort_values(
+                ["trade_date", "ts_code"]
+            )
             log(f"fit {variant} {fold_name}: train={len(train):,} valid={len(valid):,} test={len(test):,}")
-            model = fit_ranker(train, valid, features)
+            model, fit_note = fit_ranker(train, valid, features, constrained=constrained)
             training_rows.append(
                 {
                     "variant": variant,
@@ -86,26 +92,26 @@ def main() -> None:
                     "valid_rows": len(valid),
                     "test_rows": len(test),
                     "best_iteration": int(model.best_iteration_ or model.n_estimators),
+                    "fit_note": fit_note,
                 }
             )
 
-            pred_frames = []
+            fold_predictions = []
             for sample_name, frame in [("train", train), ("valid", valid), ("test", test)]:
                 pred = predict_scores(model, frame, features)
                 pred["sample"] = sample_name
                 pred["fold"] = fold_name
                 pred["variant"] = variant
-                pred_frames.append(pred)
-                ic_rows.append({**ic_summary(daily_rank_ic(pred), variant, fold_name, sample_name)})
-            pred_all = pd.concat(pred_frames, ignore_index=True)
+                fold_predictions.append(pred)
+                ic_rows.append(ic_summary(daily_rank_ic(pred), variant, fold_name, sample_name))
+
+            pred_all = pd.concat(fold_predictions, ignore_index=True)
             prediction_frames.append(pred_all)
             test_pred = pred_all.loc[pred_all["sample"].eq("test")].copy()
             yearly_ic_rows.extend(yearly_model_ic(test_pred, variant, fold_name))
-
-            gain = feature_importance(model, features, fmap, variant, fold_name)
-            importance_rows.append(gain)
+            importance_rows.append(feature_importance(model, features, fmap, variant, fold_name))
             contribution_rows.append(shap_contribution(model, test, features, fmap, variant, fold_name))
-            portfolio_rows.extend(
+            portfolio_rows.append(
                 run_backtest(
                     panel=panel,
                     dataset=dataset,
@@ -118,51 +124,48 @@ def main() -> None:
                 )
             )
 
-    feature_map = pd.concat(feature_map_rows, ignore_index=True)
     training = pd.DataFrame(training_rows)
     model_ic = pd.DataFrame(ic_rows)
-    yearly_model_ic_df = pd.DataFrame(yearly_ic_rows)
+    yearly_ic = pd.DataFrame(yearly_ic_rows)
     portfolio = pd.DataFrame(portfolio_rows)
+    feature_map = pd.concat(feature_map_rows, ignore_index=True)
     importance = pd.concat(importance_rows, ignore_index=True)
     contribution = pd.concat(contribution_rows, ignore_index=True)
     predictions = pd.concat(prediction_frames, ignore_index=True)
-
-    feature_group_importance = summarize_group_importance(importance, contribution)
+    group_importance = summarize_group_importance(importance, contribution)
     comparison = build_variant_comparison(portfolio, model_ic)
-    recommendation = build_recommendation(comparison, feature_group_importance, factor_validation["factor_ic"])
+    verdict = build_verdict(comparison, model_ic, group_importance, factor_validation["factor_ic"])
 
     feature_map.to_csv(output / "feature_map.csv", index=False, encoding="utf-8-sig")
     training.to_csv(output / "lightgbm_training_result.csv", index=False, encoding="utf-8-sig")
     model_ic.to_csv(output / "model_train_valid_test_ic.csv", index=False, encoding="utf-8-sig")
-    yearly_model_ic_df.to_csv(output / "model_yearly_ic.csv", index=False, encoding="utf-8-sig")
-    portfolio.to_csv(output / "portfolio_ablation_metrics.csv", index=False, encoding="utf-8-sig")
+    yearly_ic.to_csv(output / "model_yearly_ic.csv", index=False, encoding="utf-8-sig")
+    portfolio.to_csv(output / "portfolio_metrics.csv", index=False, encoding="utf-8-sig")
     importance.to_csv(output / "feature_importance_gain.csv", index=False, encoding="utf-8-sig")
     contribution.to_csv(output / "shap_contribution_summary.csv", index=False, encoding="utf-8-sig")
-    feature_group_importance.to_csv(output / "stock_state_contribution_comparison.csv", index=False, encoding="utf-8-sig")
+    group_importance.to_csv(output / "stock_state_group_contribution.csv", index=False, encoding="utf-8-sig")
     comparison.to_csv(output / "variant_comparison_summary.csv", index=False, encoding="utf-8-sig")
+    verdict.to_csv(output / "final_verdict.csv", index=False, encoding="utf-8-sig")
     predictions.to_parquet(output / "predictions.parquet", index=False)
-    recommendation.to_csv(output / "final_recommendation.csv", index=False, encoding="utf-8-sig")
-
-    write_report(
-        output=output,
-        factor_validation=factor_validation,
-        training=training,
-        model_ic=model_ic,
-        yearly_model_ic=yearly_model_ic_df,
-        portfolio=portfolio,
-        group_importance=feature_group_importance,
-        comparison=comparison,
-        recommendation=recommendation,
-    )
+    write_report(output, factor_validation, training, model_ic, portfolio, group_importance, comparison, verdict)
     (output / "summary.json").write_text(
         json.dumps(
             {
                 "run_dir": str(output),
                 "source_run": str(SOURCE_RUN),
                 "data_version": version,
-                "stock_pool": "current production main-board permission pool",
-                "label_and_splits": wf.FOLDS,
+                "stock_pool": "main-board permission pool",
+                "top_n": TOP_N,
+                "holding_days": HOLDING_DAYS,
+                "cost_bps": COST_BPS,
+                "timing_daily": str(timing_compare.TIMING_DAILY),
                 "variants": VARIANTS,
+                "constrained_design": {
+                    "core_alpha": "stock_state_low_vol",
+                    "risk_guard": "stock_state_microcap_risk with monotone decreasing constraint when supported",
+                    "kept_interactions": LOW_VOL_REGIME_KEEP,
+                    "removed_interactions": "all small_size regime interactions",
+                },
             },
             ensure_ascii=False,
             indent=2,
@@ -180,10 +183,11 @@ def load_dataset(log) -> pd.DataFrame:
     log(f"permission filter: {before:,} -> {len(dataset):,} rows")
     dataset["stock_state_low_vol"] = -pd.to_numeric(dataset["volatility_20_z"], errors="coerce")
     dataset["stock_state_small_size"] = -pd.to_numeric(dataset["log_circ_mv_z"], errors="coerce")
+    dataset["stock_state_microcap_risk"] = dataset["stock_state_small_size"].clip(lower=0.0, upper=2.5)
     for regime in base.REGIME_COLS:
         dataset[f"stock_state_low_vol__x__regime_{regime}"] = dataset["stock_state_low_vol"] * dataset[regime]
         dataset[f"stock_state_small_size__x__regime_{regime}"] = dataset["stock_state_small_size"] * dataset[regime]
-    return dataset
+    return dataset.replace([np.inf, -np.inf], np.nan)
 
 
 def permission_eligible(ts_code: str) -> bool:
@@ -201,37 +205,60 @@ def features_for_variant(dataset: pd.DataFrame, variant: str) -> list[str]:
     original_interactions = [
         c
         for c in dataset.columns
-        if "__x__regime_" in c
-        and any(c.startswith(f"{cluster}__x__") for cluster in base.CLUSTER_COLS)
+        if "__x__regime_" in c and any(c.startswith(f"{cluster}__x__") for cluster in base.CLUSTER_COLS)
     ]
     original = [*base.CLUSTER_COLS, *base.REGIME_COLS, *original_interactions]
     stock_state_removed = [f for f in original if f != "cluster_stock_state" and not f.startswith("cluster_stock_state__x__")]
     if variant == "A_original_cluster_stock_state":
         return original
-    if variant == "B_low_vol_only":
-        return [*stock_state_removed, "stock_state_low_vol"]
-    if variant == "C_low_vol_plus_size":
-        return [*stock_state_removed, "stock_state_low_vol", "stock_state_small_size"]
-    if variant == "D_low_vol_size_regime_interaction":
+    if variant == "D_unconstrained_low_vol_size_interaction":
         low_vol_interactions = [f"stock_state_low_vol__x__regime_{regime}" for regime in base.REGIME_COLS]
         size_interactions = [f"stock_state_small_size__x__regime_{regime}" for regime in base.REGIME_COLS]
-        return [*stock_state_removed, "stock_state_low_vol", "stock_state_small_size", *low_vol_interactions, *size_interactions]
+        return [
+            *stock_state_removed,
+            "stock_state_low_vol",
+            "stock_state_small_size",
+            *low_vol_interactions,
+            *size_interactions,
+        ]
+    if variant == "E_constrained_low_vol_size_guard":
+        low_vol_interactions = [f"stock_state_low_vol__x__regime_{regime}" for regime in LOW_VOL_REGIME_KEEP]
+        return [
+            *stock_state_removed,
+            "stock_state_low_vol",
+            "stock_state_microcap_risk",
+            *low_vol_interactions,
+        ]
+    if variant == "F_soft_low_vol_microcap_guard":
+        low_vol_interactions = [f"stock_state_low_vol__x__regime_{regime}" for regime in LOW_VOL_REGIME_KEEP]
+        return [
+            *stock_state_removed,
+            "stock_state_low_vol",
+            "stock_state_microcap_risk",
+            *low_vol_interactions,
+        ]
+    if variant == "G_low_vol_limited_interaction":
+        low_vol_interactions = [f"stock_state_low_vol__x__regime_{regime}" for regime in LOW_VOL_REGIME_KEEP]
+        return [
+            *stock_state_removed,
+            "stock_state_low_vol",
+            *low_vol_interactions,
+        ]
     raise ValueError(f"unknown variant: {variant}")
 
 
 def build_feature_map(features: list[str], variant: str) -> pd.DataFrame:
-    rows = []
-    for feature in features:
-        group = feature_group(feature)
-        rows.append(
+    return pd.DataFrame(
+        [
             {
                 "variant": variant,
                 "feature": feature,
-                "feature_group": group,
-                "is_stock_state_related": group.startswith("stock_state") or group.startswith("old_cluster_stock_state"),
+                "feature_group": feature_group(feature),
+                "is_stock_state_related": feature_group(feature).startswith(("stock_state", "old_cluster_stock_state")),
             }
-        )
-    return pd.DataFrame(rows)
+            for feature in features
+        ]
+    )
 
 
 def feature_group(feature: str) -> str:
@@ -243,6 +270,8 @@ def feature_group(feature: str) -> str:
         return "stock_state_low_vol_direct"
     if feature == "stock_state_small_size":
         return "stock_state_small_size_direct"
+    if feature == "stock_state_microcap_risk":
+        return "stock_state_microcap_risk_guard"
     if feature.startswith("stock_state_low_vol__x__"):
         return "stock_state_low_vol_regime_interaction"
     if feature.startswith("stock_state_small_size__x__"):
@@ -255,32 +284,59 @@ def feature_group(feature: str) -> str:
     return "other"
 
 
-def fit_ranker(train: pd.DataFrame, valid: pd.DataFrame, features: list[str]):
+def fit_ranker(
+    train: pd.DataFrame,
+    valid: pd.DataFrame,
+    features: list[str],
+    *,
+    constrained: bool,
+) -> tuple[Any, str]:
     import lightgbm as lgb
 
-    model = lgb.LGBMRanker(
-        objective="lambdarank",
-        metric="ndcg",
-        n_estimators=250,
-        learning_rate=0.035,
-        num_leaves=15,
-        min_child_samples=40,
-        subsample=0.85,
-        colsample_bytree=0.85,
-        reg_lambda=3.0,
-        random_state=42,
-        verbosity=-1,
-        force_col_wise=True,
-    )
-    model.fit(
-        train[features],
-        base.relevance_labels(train),
-        group=train.groupby("trade_date").size().to_list(),
-        eval_set=[(valid[features], base.relevance_labels(valid))],
-        eval_group=[valid.groupby("trade_date").size().to_list()],
-        callbacks=[lgb.early_stopping(30, verbose=False)],
-    )
-    return model
+    params: dict[str, Any] = {
+        "objective": "lambdarank",
+        "metric": "ndcg",
+        "n_estimators": 250 if not constrained else 180,
+        "learning_rate": 0.035 if not constrained else 0.03,
+        "num_leaves": 15 if not constrained else 7,
+        "min_child_samples": 40 if not constrained else 80,
+        "subsample": 0.85 if not constrained else 0.80,
+        "colsample_bytree": 0.85 if not constrained else 0.75,
+        "reg_lambda": 3.0 if not constrained else 8.0,
+        "random_state": 42,
+        "verbosity": -1,
+        "force_col_wise": True,
+    }
+    if constrained:
+        params["max_depth"] = 3
+        params["monotone_constraints"] = [
+            1 if feature == "stock_state_low_vol" else (-1 if feature == "stock_state_microcap_risk" else 0)
+            for feature in features
+        ]
+        params["feature_contri"] = [0.20 if feature == "stock_state_microcap_risk" else 1.0 for feature in features]
+
+    def run_fit(model):
+        model.fit(
+            train[features],
+            base.relevance_labels(train),
+            group=train.groupby("trade_date").size().to_list(),
+            eval_set=[(valid[features], base.relevance_labels(valid))],
+            eval_group=[valid.groupby("trade_date").size().to_list()],
+            callbacks=[lgb.early_stopping(30, verbose=False)],
+        )
+        return model
+
+    model = lgb.LGBMRanker(**params)
+    try:
+        return run_fit(model), "constrained" if constrained else "standard"
+    except Exception as exc:
+        if not constrained:
+            raise
+        fallback = dict(params)
+        fallback.pop("monotone_constraints", None)
+        fallback.pop("feature_contri", None)
+        model = lgb.LGBMRanker(**fallback)
+        return run_fit(model), f"fallback_without_constraints: {type(exc).__name__}: {exc}"
 
 
 def predict_scores(model, frame: pd.DataFrame, features: list[str]) -> pd.DataFrame:
@@ -305,8 +361,8 @@ def feature_importance(model, features: list[str], fmap: pd.DataFrame, variant: 
 def shap_contribution(model, test: pd.DataFrame, features: list[str], fmap: pd.DataFrame, variant: str, fold: str) -> pd.DataFrame:
     contrib = model.booster_.predict(test[features], pred_contrib=True)
     data = pd.DataFrame(contrib[:, :-1], columns=features)
-    rows = []
     mapping = fmap.set_index("feature")["feature_group"].to_dict()
+    rows = []
     for feature in features:
         values = pd.to_numeric(data[feature], errors="coerce")
         rows.append(
@@ -323,35 +379,29 @@ def shap_contribution(model, test: pd.DataFrame, features: list[str], fmap: pd.D
     return pd.DataFrame(rows)
 
 
-def validate_new_factors(dataset: pd.DataFrame, output: Path) -> dict[str, pd.DataFrame]:
+def validate_factors(dataset: pd.DataFrame, output: Path) -> dict[str, pd.DataFrame]:
     factor_dir = output / "factor_validation"
     factor_dir.mkdir()
     factor_cols = [
         "stock_state_low_vol",
         "stock_state_small_size",
-        *[f"stock_state_low_vol__x__regime_{regime}" for regime in base.REGIME_COLS],
-        *[f"stock_state_small_size__x__regime_{regime}" for regime in base.REGIME_COLS],
+        "stock_state_microcap_risk",
+        *[f"stock_state_low_vol__x__regime_{regime}" for regime in LOW_VOL_REGIME_KEEP],
     ]
-    factor_rows = []
+    rows = []
     yearly_rows = []
-    decile_rows = []
     for factor in factor_cols:
         daily = daily_factor_ic(dataset, factor)
-        factor_rows.append(factor_ic_summary(daily["rank_ic"], factor, "2024_2026"))
+        rows.append(factor_ic_summary(daily["rank_ic"], factor, "2024_2026"))
         if not daily.empty:
             daily["year"] = daily["trade_date"].dt.year
             for year, frame in daily.groupby("year"):
                 yearly_rows.append(factor_ic_summary(frame["rank_ic"], factor, int(year)))
-        dec = decile_return(dataset, factor)
-        dec["factor"] = factor
-        decile_rows.append(dec)
-    factor_ic = pd.DataFrame(factor_rows).sort_values("rank_ic_mean", ascending=False)
+    factor_ic = pd.DataFrame(rows).sort_values("rank_ic_mean", ascending=False)
     yearly_ic = pd.DataFrame(yearly_rows).sort_values(["factor", "window"])
-    deciles = pd.concat(decile_rows, ignore_index=True)
-    factor_ic.to_csv(factor_dir / "new_factor_ic.csv", index=False, encoding="utf-8-sig")
-    yearly_ic.to_csv(factor_dir / "new_factor_yearly_ic.csv", index=False, encoding="utf-8-sig")
-    deciles.to_csv(factor_dir / "new_factor_decile_returns.csv", index=False, encoding="utf-8-sig")
-    return {"factor_ic": factor_ic, "yearly_ic": yearly_ic, "deciles": deciles}
+    factor_ic.to_csv(factor_dir / "constrained_factor_ic.csv", index=False, encoding="utf-8-sig")
+    yearly_ic.to_csv(factor_dir / "constrained_factor_yearly_ic.csv", index=False, encoding="utf-8-sig")
+    return {"factor_ic": factor_ic, "yearly_ic": yearly_ic}
 
 
 def daily_factor_ic(frame: pd.DataFrame, factor: str) -> pd.DataFrame:
@@ -360,15 +410,10 @@ def daily_factor_ic(frame: pd.DataFrame, factor: str) -> pd.DataFrame:
         data = group[[factor, "label"]].replace([np.inf, -np.inf], np.nan).dropna()
         if len(data) < 30 or data[factor].nunique() < 3 or data["label"].nunique() < 3:
             continue
-        rows.append(
-            {
-                "trade_date": pd.Timestamp(date),
-                "rank_ic": float(data[factor].corr(data["label"], method="spearman")),
-                "pearson_ic": float(data[factor].corr(data["label"], method="pearson")),
-                "n": int(len(data)),
-            }
-        )
-    return pd.DataFrame(rows, columns=["trade_date", "rank_ic", "pearson_ic", "n"])
+        value = data[factor].corr(data["label"], method="spearman")
+        if pd.notna(value):
+            rows.append({"trade_date": pd.Timestamp(date), "rank_ic": float(value), "n": int(len(data))})
+    return pd.DataFrame(rows, columns=["trade_date", "rank_ic", "n"])
 
 
 def daily_rank_ic(pred: pd.DataFrame) -> pd.Series:
@@ -422,31 +467,6 @@ def yearly_model_ic(pred: pd.DataFrame, variant: str, fold: str) -> list[dict[st
     return out
 
 
-def decile_return(frame: pd.DataFrame, factor: str, bins: int = 10) -> pd.DataFrame:
-    rows = []
-    for date, group in frame.groupby("trade_date"):
-        data = group[[factor, "label"]].replace([np.inf, -np.inf], np.nan).dropna()
-        if len(data) < bins * 10 or data[factor].nunique() < bins:
-            continue
-        data = data.assign(decile=pd.qcut(data[factor].rank(method="first"), bins, labels=False) + 1)
-        for decile, local in data.groupby("decile"):
-            rows.append(
-                {
-                    "trade_date": pd.Timestamp(date),
-                    "decile": int(decile),
-                    "mean_forward_return": float(local["label"].mean()),
-                    "count": int(len(local)),
-                }
-            )
-    if not rows:
-        return pd.DataFrame(columns=["decile", "mean_forward_return", "count", "days"])
-    data = pd.DataFrame(rows)
-    return (
-        data.groupby("decile", as_index=False)
-        .agg(mean_forward_return=("mean_forward_return", "mean"), count=("count", "mean"), days=("trade_date", "nunique"))
-    )
-
-
 def run_backtest(
     *,
     panel: pd.DataFrame,
@@ -457,7 +477,7 @@ def run_backtest(
     market_benchmark: pd.DataFrame,
     position_multiplier: pd.Series,
     log,
-) -> list[dict[str, Any]]:
+) -> dict[str, Any]:
     member = dataset.loc[
         dataset["trade_date"].between(pd.Timestamp(fold["test_start"]), pd.Timestamp(fold["test_end"])),
         ["trade_date", "ts_code", "condition_quantile"],
@@ -465,7 +485,7 @@ def run_backtest(
     member["selection_eligible"] = True
     factor_values = pred[["trade_date", "ts_code", "score"]].rename(columns={"score": "factor_value"})
     panel_slice = panel.loc[panel["trade_date"].between(pd.Timestamp(fold["test_start"]), pd.Timestamp(fold["test_end"]))].copy()
-    result = BacktestEngine().run(
+    result = base.BacktestEngine().run(
         panel_slice,
         factor_values,
         universe="liquid",
@@ -474,13 +494,13 @@ def run_backtest(
         initial_cash=INITIAL_CASH,
         lot_size=LOT_SIZE,
         constraints=production_constraints(),
-        cost_model=CostModel(commission_bps_per_side=3, slippage_bps_per_side=5, stamp_duty_bps_sell=5),
+        cost_model=base.CostModel(commission_bps_per_side=3, slippage_bps_per_side=5, stamp_duty_bps_sell=5),
         cost_scenario_bps=COST_BPS,
         selection_membership=member,
         position_multiplier=position_multiplier,
         market_benchmark=market_benchmark,
     )
-    annualized_turnover = float(result.daily["portfolio_turnover"].mean() * 252)
+    csi1000 = float(result.metrics.get("market_index_annualized_return", np.nan))
     row = {
         "variant": variant,
         "fold": fold["fold"],
@@ -488,22 +508,22 @@ def run_backtest(
         "holding_days": HOLDING_DAYS,
         "cost_bps": COST_BPS,
         **result.metrics,
-        "csi1000_annualized_return": result.metrics.get("market_index_annualized_return"),
-        "annualized_excess_return_vs_csi1000": (
-            result.metrics["annualized_return"] - result.metrics.get("market_index_annualized_return", np.nan)
-        ),
-        "annualized_turnover": annualized_turnover,
+        "csi1000_annualized_return": csi1000,
+        "annualized_excess_return_vs_csi1000": float(result.metrics["annualized_return"] - csi1000),
+        "annualized_turnover": float(result.daily["portfolio_turnover"].mean() * 252),
+        "top_stock_buy_share": stock_buy_share(result.trades),
+        "top_month_return_share": month_return_share(result.daily),
     }
     log(
         f"bt {variant} {fold['fold']} ann={row['annualized_return']:.2%} "
         f"excess_csi1000={row['annualized_excess_return_vs_csi1000']:.2%} "
         f"mdd={row['max_drawdown']:.2%}"
     )
-    return [row]
+    return row
 
 
-def production_constraints() -> ExecutionConstraints:
-    return ExecutionConstraints(
+def production_constraints():
+    return base.ExecutionConstraints(
         exclude_suspended=True,
         cannot_buy_limit_up=True,
         cannot_sell_limit_down=True,
@@ -511,6 +531,26 @@ def production_constraints() -> ExecutionConstraints:
         exclude_delisting_period=True,
         min_listing_days=60,
     )
+
+
+def stock_buy_share(trades: pd.DataFrame) -> float:
+    if trades.empty:
+        return np.nan
+    buys = trades.loc[trades["side"].eq("BUY")]
+    if buys.empty or buys["gross_value"].sum() <= 0:
+        return np.nan
+    by_stock = buys.groupby("ts_code")["gross_value"].sum().sort_values(ascending=False)
+    return float(by_stock.head(5).sum() / by_stock.sum())
+
+
+def month_return_share(daily: pd.DataFrame) -> float:
+    frame = daily.copy()
+    frame["month"] = pd.to_datetime(frame["trade_date"]).dt.to_period("M").astype(str)
+    monthly = frame.groupby("month")["return"].apply(lambda s: float((1.0 + s).prod() - 1.0))
+    positive = monthly[monthly > 0]
+    if positive.empty or positive.sum() <= 0:
+        return np.nan
+    return float(positive.max() / positive.sum())
 
 
 def summarize_group_importance(importance: pd.DataFrame, contribution: pd.DataFrame) -> pd.DataFrame:
@@ -531,7 +571,7 @@ def summarize_group_importance(importance: pd.DataFrame, contribution: pd.DataFr
 
 def build_variant_comparison(portfolio: pd.DataFrame, model_ic: pd.DataFrame) -> pd.DataFrame:
     test_ic = model_ic.loc[model_ic["sample"].eq("test")].copy()
-    ic_summary_df = (
+    ic = (
         test_ic.groupby("variant", as_index=False)
         .agg(
             mean_test_rank_ic=("rank_ic_mean", "mean"),
@@ -551,102 +591,96 @@ def build_variant_comparison(portfolio: pd.DataFrame, model_ic: pd.DataFrame) ->
             positive_excess_folds=("annualized_excess_return_vs_csi1000", lambda s: int((s > 0).sum())),
         )
     )
-    return port.merge(ic_summary_df, on="variant", how="left").sort_values("mean_excess_vs_csi1000", ascending=False)
+    return port.merge(ic, on="variant", how="left").sort_values("mean_excess_vs_csi1000", ascending=False)
 
 
-def build_recommendation(
+def build_verdict(
     comparison: pd.DataFrame,
+    model_ic: pd.DataFrame,
     group_importance: pd.DataFrame,
     factor_ic: pd.DataFrame,
 ) -> pd.DataFrame:
-    best_variant = comparison.iloc[0]["variant"] if not comparison.empty else None
-    old = comparison.loc[comparison["variant"].eq("A_original_cluster_stock_state")]
-    best = comparison.loc[comparison["variant"].eq(best_variant)] if best_variant is not None else pd.DataFrame()
+    def metric(variant: str, col: str) -> float:
+        values = comparison.loc[comparison["variant"].eq(variant), col]
+        return float(values.iloc[0]) if len(values) else np.nan
+
+    constrained = "E_constrained_low_vol_size_guard"
+    old = "A_original_cluster_stock_state"
+    unconstrained = "D_unconstrained_low_vol_size_interaction"
+    stock_groups = group_importance.loc[group_importance["variant"].eq(constrained)].copy()
+    guard_share = stock_groups.loc[stock_groups["feature_group"].eq("stock_state_microcap_risk_guard"), "shap_abs_share"].mean()
+    low_vol_share = stock_groups.loc[
+        stock_groups["feature_group"].isin(["stock_state_low_vol_direct", "stock_state_low_vol_regime_interaction"]),
+        "shap_abs_share",
+    ].mean()
     low_vol_ic = factor_ic.loc[factor_ic["factor"].eq("stock_state_low_vol"), "rank_ic_mean"]
-    size_ic = factor_ic.loc[factor_ic["factor"].eq("stock_state_small_size"), "rank_ic_mean"]
-    d = group_importance.loc[group_importance["variant"].eq("D_low_vol_size_regime_interaction")]
-    stock_related = d.loc[d["feature_group"].str.startswith("stock_state")]
-    interaction_share = float(
-        stock_related.loc[stock_related["feature_group"].str.contains("regime_interaction"), "shap_abs_share"].mean()
-    ) if not stock_related.empty else np.nan
-    best_has_all_positive_excess = bool(len(best) and int(best["positive_excess_folds"].iloc[0]) == 3)
-    best_excess = float(best["mean_excess_vs_csi1000"].iloc[0]) if len(best) else np.nan
-    old_excess = float(old["mean_excess_vs_csi1000"].iloc[0]) if len(old) else np.nan
-    regime_answer = (
-        "YES" if best_variant == "D_low_vol_size_regime_interaction" and best_has_all_positive_excess
-        else ("PARTIAL" if best_variant == "D_low_vol_size_regime_interaction" else "NOT_CONFIRMED")
-    )
+    microcap_ic = factor_ic.loc[factor_ic["factor"].eq("stock_state_microcap_risk"), "rank_ic_mean"]
     rows = [
         {
-            "question": "cluster_stock_state是否应该删除",
-            "answer": "YES_REPLACE_WITH_SPLIT_FEATURES" if best_variant != "A_original_cluster_stock_state" else "NO",
-            "evidence": f"best_variant={best_variant}; mean_excess_old={old_excess:.4f}; mean_excess_best={best_excess:.4f}",
+            "check": "constrained_vs_old_excess",
+            "result": "PASS" if metric(constrained, "mean_excess_vs_csi1000") > metric(old, "mean_excess_vs_csi1000") else "FAIL",
+            "evidence": f"E={metric(constrained, 'mean_excess_vs_csi1000'):.4f}; A={metric(old, 'mean_excess_vs_csi1000'):.4f}",
         },
         {
-            "question": "low_vol是否应该成为核心Alpha",
-            "answer": "YES" if len(low_vol_ic) and float(low_vol_ic.iloc[0]) > 0 else "NO",
-            "evidence": f"stock_state_low_vol_rank_ic={float(low_vol_ic.iloc[0]) if len(low_vol_ic) else np.nan:.4f}",
+            "check": "constrained_vs_unconstrained_min_ic",
+            "result": "PASS" if metric(constrained, "min_test_rank_ic") >= metric(unconstrained, "min_test_rank_ic") else "FAIL",
+            "evidence": f"E={metric(constrained, 'min_test_rank_ic'):.4f}; D={metric(unconstrained, 'min_test_rank_ic'):.4f}",
         },
         {
-            "question": "size是否应该降级为风险控制变量",
-            "answer": "YES" if len(size_ic) and float(size_ic.iloc[0]) <= 0 else "WATCH",
-            "evidence": f"stock_state_small_size_rank_ic={float(size_ic.iloc[0]) if len(size_ic) else np.nan:.4f}",
+            "check": "low_vol_core_alpha",
+            "result": "PASS" if len(low_vol_ic) and float(low_vol_ic.iloc[0]) > 0 else "FAIL",
+            "evidence": f"low_vol_rank_ic={float(low_vol_ic.iloc[0]) if len(low_vol_ic) else np.nan:.4f}; shap_share={low_vol_share:.4f}",
         },
         {
-            "question": "regime interaction是否提升稳定性",
-            "answer": regime_answer,
-            "evidence": (
-                f"D_interaction_mean_shap_share={interaction_share:.4f}; "
-                f"positive_excess_folds={int(best['positive_excess_folds'].iloc[0]) if len(best) else 'NA'}/3"
-            ),
+            "check": "microcap_as_guard",
+            "result": "PASS" if len(microcap_ic) and float(microcap_ic.iloc[0]) <= 0 else "WATCH",
+            "evidence": f"microcap_risk_rank_ic={float(microcap_ic.iloc[0]) if len(microcap_ic) else np.nan:.4f}; shap_share={guard_share:.4f}",
         },
     ]
     return pd.DataFrame(rows)
 
 
-def md_table(frame: pd.DataFrame, max_rows: int = 20) -> str:
+def md_table(frame: pd.DataFrame, max_rows: int = 30) -> str:
     if frame is None or frame.empty:
         return "_empty_"
     return frame.head(max_rows).round(6).to_markdown(index=False)
 
 
 def write_report(
-    *,
     output: Path,
     factor_validation: dict[str, pd.DataFrame],
     training: pd.DataFrame,
     model_ic: pd.DataFrame,
-    yearly_model_ic: pd.DataFrame,
     portfolio: pd.DataFrame,
     group_importance: pd.DataFrame,
     comparison: pd.DataFrame,
-    recommendation: pd.DataFrame,
+    verdict: pd.DataFrame,
 ) -> None:
     stock_groups = group_importance.loc[
         group_importance["feature_group"].str.startswith("stock_state")
         | group_importance["feature_group"].str.startswith("old_cluster_stock_state")
     ].copy()
     lines = [
-        "# cluster_stock_state Refactor Experiment",
+        "# Constrained stock_state Experiment",
         "",
         "## Scope",
-        "- Same walk-forward dataset, labels, splits, timing overlay, Top5, holding-days and cost assumptions.",
-        "- Stock pool: current production main-board permission pool.",
-        "- Only feature engineering around `cluster_stock_state` is changed.",
+        "- Same source walk-forward dataset, label, split, main-board permission filter, Top5, 10-day holding, 20bps cost.",
+        "- Same timing `target_position` overlay and CSI1000 benchmark.",
+        "- No web or live-signal wiring is changed.",
         "",
         "## Variants",
         *[f"- `{key}`: {value}" for key, value in VARIANTS.items()],
         "",
-        "## New Factor Validation",
-        md_table(factor_validation["factor_ic"], 30),
+        "## Factor IC",
+        md_table(factor_validation["factor_ic"]),
         "",
-        "## LightGBM Train / Valid / Test IC",
-        md_table(model_ic.sort_values(["variant", "fold", "sample"]), 60),
+        "## Train / Valid / Test IC",
+        md_table(model_ic.sort_values(["variant", "fold", "sample"]), 80),
         "",
-        "## Portfolio Ablation Summary",
+        "## Portfolio Summary",
         md_table(comparison),
         "",
-        "## Portfolio Metrics By Fold",
+        "## Yearly Backtest",
         md_table(
             portfolio[
                 [
@@ -660,29 +694,25 @@ def write_report(
                     "execution_rate",
                 ]
             ].sort_values(["variant", "fold"]),
-            60,
+            80,
         ),
         "",
-        "## Stock-state Contribution Comparison",
-        md_table(stock_groups.sort_values(["variant", "fold", "shap_abs_share"], ascending=[True, True, False]), 80),
+        "## Stock-state Contribution",
+        md_table(stock_groups.sort_values(["variant", "fold", "shap_abs_share"], ascending=[True, True, False]), 100),
         "",
-        "## Final Recommendation",
-        md_table(recommendation),
+        "## Verdict",
+        md_table(verdict),
         "",
         "## Files",
-        "- `factor_validation/new_factor_ic.csv`",
-        "- `factor_validation/new_factor_yearly_ic.csv`",
-        "- `factor_validation/new_factor_decile_returns.csv`",
+        "- `portfolio_metrics.csv`",
+        "- `variant_comparison_summary.csv`",
         "- `model_train_valid_test_ic.csv`",
-        "- `model_yearly_ic.csv`",
-        "- `portfolio_ablation_metrics.csv`",
         "- `feature_importance_gain.csv`",
         "- `shap_contribution_summary.csv`",
-        "- `stock_state_contribution_comparison.csv`",
-        "- `variant_comparison_summary.csv`",
-        "- `final_recommendation.csv`",
+        "- `stock_state_group_contribution.csv`",
+        "- `final_verdict.csv`",
     ]
-    (output / "stock_state_refactor_report.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    (output / "constrained_stock_state_report.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 if __name__ == "__main__":

@@ -3,7 +3,7 @@
 Signal convention:
 - Features use data available at signal-date close.
 - Entries are intended for the next trading-day open.
-- The selector is the validated regime-aware cluster LightGBM ranker, direct top.
+- The selector is the validated cluster_stock_state + low-vol LightGBM ranker, direct top.
 - Timing overlay is applied as the new-entry cash multiplier.
 """
 
@@ -29,8 +29,8 @@ DEFAULT_TIMING_DAILY = Path(
     "timing_position_model_v1_20260708T025521Z_181c72c6/"
     "timing_position_daily.csv"
 )
-MODEL_VARIANT = "regime_aware_cluster_ranker"
-MODEL_VERSION = "sell_impact_regime_cluster_ranker_direct_top_v1"
+MODEL_VARIANT = "cluster_stock_state_plus_low_vol_ranker"
+MODEL_VERSION = "sell_impact_cluster_low_vol_ranker_direct_top_v2"
 TOP_N = 5
 TOP_CANDIDATES = 100
 TRAIN_START = "20220101"
@@ -61,6 +61,7 @@ def main(signal_date: str | None = None) -> None:
     finally:
         base.TRAIN_START, base.TEST_END = old_train_start, old_test_end
     dataset = dataset.loc[dataset["ts_code"].map(permission_eligible)].copy()
+    dataset = add_live_model_features(dataset)
     dataset.to_parquet(output / "live_dataset.parquet", index=False)
     log(f"dataset rows={len(dataset):,} signal_candidates={dataset['trade_date'].eq(signal_ts).sum():,}")
 
@@ -104,6 +105,7 @@ def main(signal_date: str | None = None) -> None:
         "is_limit_up_open",
         "is_limit_down_open",
         *base.CLUSTER_COLS,
+        "stock_state_low_vol",
         *base.REGIME_COLS,
     ]
     existing_cols = [c for c in ordered_cols if c in top100.columns]
@@ -124,7 +126,7 @@ def main(signal_date: str | None = None) -> None:
         "intended_execution": "next_trade_day_open",
         "entry_date_for_timing": entry_date,
         "data_version": version,
-        "model": "LightGBM LambdaRank regime-aware factor clusters",
+        "model": "LightGBM LambdaRank cluster_stock_state + stock_state_low_vol",
         "signal_algorithm": MODEL_VERSION,
         "frozen_model_version": MODEL_VERSION,
         "selector": "ranker_direct_top",
@@ -149,6 +151,7 @@ def main(signal_date: str | None = None) -> None:
         "valid_rows": int(len(valid)),
         "features": features,
         "factor_clusters": base.CLUSTER_COLS,
+        "stock_state_augmented_features": ["stock_state_low_vol"],
         "regime_features": base.REGIME_COLS,
         "predictable_candidates": int(len(signal_rows)),
         "shown_candidates": int(len(top100)),
@@ -174,7 +177,7 @@ def load_latest_panel() -> tuple[str, pd.DataFrame]:
 def fit_ranker(dataset: pd.DataFrame, signal_ts: pd.Timestamp, log):
     import lightgbm as lgb
 
-    features = base.features_for_variant(MODEL_VARIANT, dataset)
+    features = features_for_live_model(dataset)
     year = signal_ts.year
     train_start = pd.Timestamp(f"{max(2022, year - 4)}-01-01")
     train_end = pd.Timestamp(f"{year - 2}-12-31")
@@ -226,6 +229,25 @@ def fit_ranker(dataset: pd.DataFrame, signal_ts: pd.Timestamp, log):
         callbacks=[lgb.early_stopping(30, verbose=False)],
     )
     return model, train, valid, features
+
+
+def add_live_model_features(dataset: pd.DataFrame) -> pd.DataFrame:
+    out = dataset.copy()
+    out["stock_state_low_vol"] = -pd.to_numeric(out["volatility_20_z"], errors="coerce")
+    return out.replace([np.inf, -np.inf], np.nan)
+
+
+def features_for_live_model(dataset: pd.DataFrame) -> list[str]:
+    original_interactions = [
+        c
+        for c in dataset.columns
+        if "__x__regime_" in c and any(c.startswith(f"{cluster}__x__") for cluster in base.CLUSTER_COLS)
+    ]
+    features = [*base.CLUSTER_COLS, *base.REGIME_COLS, *original_interactions, "stock_state_low_vol"]
+    missing = [feature for feature in features if feature not in dataset.columns]
+    if missing:
+        raise ValueError(f"live model missing features: {missing}")
+    return features
 
 
 def enrich_candidates(candidates: pd.DataFrame, panel: pd.DataFrame, signal_ts: pd.Timestamp) -> pd.DataFrame:
