@@ -64,6 +64,12 @@ TIMING_STATE_AXES = {
     "epu_log": "macro",
 }
 
+PANEL_SENTIMENT_AXES = {
+    "limit_up_open_rate": "sentiment",
+    "limit_down_open_rate": "sentiment",
+    "limit_pressure": "sentiment",
+}
+
 
 def main() -> None:
     output = OUTPUT_ROOT / f"sell_impact_factor_regime_condition_matrix_{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}"
@@ -83,15 +89,21 @@ def main() -> None:
     timing_path = latest_timing_dataset()
     timing = load_timing_states(timing_path)
     log(f"timing states={timing_path} rows={len(timing):,}")
+    panel_sentiment = load_panel_sentiment()
+    log(f"panel sentiment rows={len(panel_sentiment):,}")
 
-    state_frame, state_axis_meta = build_state_frame(dataset, timing)
+    state_frame, state_axis_meta = build_state_frame(dataset, timing, panel_sentiment)
     state_frame.to_csv(output / "market_state_axes_daily.csv", index=False, encoding="utf-8-sig")
     state_axis_meta.to_csv(output / "market_state_axis_metadata.csv", index=False, encoding="utf-8-sig")
     log(f"state axes available={state_axis_meta['state_axis'].nunique()}")
 
+    log("precomputing daily factor metrics")
+    daily_factor_metrics = build_daily_factor_metrics(dataset, log)
+    daily_factor_metrics.to_parquet(output / "factor_daily_metrics.parquet", index=False)
+    log(f"daily factor metrics rows={len(daily_factor_metrics):,}")
+
     matrix_rows: list[dict[str, Any]] = []
     yearly_rows: list[dict[str, Any]] = []
-    topn_rows: list[dict[str, Any]] = []
     exposure_rows: list[dict[str, Any]] = []
     interaction_rows: list[dict[str, Any]] = []
 
@@ -100,24 +112,26 @@ def main() -> None:
         buckets = state_frame[["trade_date", state_axis, f"{state_axis}__bucket"]].dropna().copy()
         if buckets.empty:
             continue
-        data = dataset.merge(buckets[["trade_date", f"{state_axis}__bucket"]], on="trade_date", how="inner")
-        log(f"state_axis={state_axis} rows={len(data):,} dates={data['trade_date'].nunique():,}")
+        metrics = daily_factor_metrics.merge(
+            buckets[["trade_date", f"{state_axis}__bucket"]],
+            on="trade_date",
+            how="inner",
+        ).rename(columns={f"{state_axis}__bucket": "state_bucket"})
+        log(f"state_axis={state_axis} metric_rows={len(metrics):,} dates={metrics['trade_date'].nunique():,}")
         for factor, factor_group in ALPHA_FACTORS.items():
-            if factor not in data.columns:
+            factor_metrics = metrics.loc[metrics["factor"].eq(factor)].copy()
+            if factor_metrics.empty:
                 continue
-            for bucket, group in data.groupby(f"{state_axis}__bucket", sort=True):
+            for bucket, group in factor_metrics.groupby("state_bucket", sort=True):
                 if group["trade_date"].nunique() < 10:
                     continue
-                summary = conditional_summary(group, factor, factor_group, state_axis, str(bucket))
-                matrix_rows.append(summary)
-                yearly_rows.extend(yearly_summary(group, factor, factor_group, state_axis, str(bucket)))
-                topn_rows.extend(topn_daily_summary(group, factor, factor_group, state_axis, str(bucket)))
-                exposure_rows.append(exposure_summary(group, factor, factor_group, state_axis, str(bucket)))
-            interaction_rows.append(axis_factor_interaction_summary(data, factor, factor_group, state_axis))
+                matrix_rows.append(aggregate_condition_metrics(group, factor, factor_group, state_axis, str(bucket)))
+                yearly_rows.extend(aggregate_yearly_metrics(group, factor, factor_group, state_axis, str(bucket)))
+                exposure_rows.append(aggregate_exposure_metrics(group, factor, factor_group, state_axis, str(bucket)))
+            interaction_rows.append(axis_factor_interaction_summary_from_metrics(factor_metrics, factor, factor_group, state_axis))
 
     matrix = pd.DataFrame(matrix_rows)
     yearly = pd.DataFrame(yearly_rows)
-    topn = pd.DataFrame(topn_rows)
     exposure = pd.DataFrame(exposure_rows)
     interactions = pd.DataFrame(interaction_rows)
     reliability = build_reliability_flags(matrix, yearly, exposure)
@@ -125,7 +139,6 @@ def main() -> None:
 
     matrix.to_csv(output / "factor_regime_condition_matrix.csv", index=False, encoding="utf-8-sig")
     yearly.to_csv(output / "factor_regime_condition_yearly.csv", index=False, encoding="utf-8-sig")
-    topn.to_csv(output / "factor_regime_topn_payoff_daily.csv", index=False, encoding="utf-8-sig")
     exposure.to_csv(output / "factor_regime_style_exposure.csv", index=False, encoding="utf-8-sig")
     interactions.to_csv(output / "factor_regime_interaction_strength.csv", index=False, encoding="utf-8-sig")
     reliability.to_csv(output / "factor_regime_reliability_flags.csv", index=False, encoding="utf-8-sig")
@@ -184,13 +197,32 @@ def load_timing_states(path: Path) -> pd.DataFrame:
     return timing[cols].replace([np.inf, -np.inf], np.nan)
 
 
-def build_state_frame(dataset: pd.DataFrame, timing: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+def load_panel_sentiment() -> pd.DataFrame:
+    _, panel = base.load_panel()
+    panel["trade_date"] = pd.to_datetime(panel["trade_date"])
+    panel = panel.loc[panel["ts_code"].map(low_vol.permission_eligible)].copy()
+    tradable = panel["is_liquid"].fillna(False).astype(bool) if "is_liquid" in panel else pd.Series(True, index=panel.index)
+    panel = panel.loc[tradable].copy()
+    out = panel.groupby("trade_date", as_index=False).agg(
+        limit_up_open_rate=("is_limit_up_open", lambda s: float(s.fillna(False).astype(bool).mean())),
+        limit_down_open_rate=("is_limit_down_open", lambda s: float(s.fillna(False).astype(bool).mean())),
+    )
+    out["limit_pressure"] = out["limit_up_open_rate"] - out["limit_down_open_rate"]
+    return out
+
+
+def build_state_frame(dataset: pd.DataFrame, timing: pd.DataFrame, panel_sentiment: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
     base_states = dataset.groupby("trade_date", as_index=False).agg(
         **{column: (column, "mean") for column in BASE_STATE_AXES if column in dataset.columns}
     )
     state = base_states.merge(timing, on="trade_date", how="left")
+    state = state.merge(panel_sentiment, on="trade_date", how="left")
     metadata_rows = []
-    all_axes = {**{k: v for k, v in BASE_STATE_AXES.items() if k in state.columns}, **{k: v for k, v in TIMING_STATE_AXES.items() if k in state.columns}}
+    all_axes = {
+        **{k: v for k, v in BASE_STATE_AXES.items() if k in state.columns},
+        **{k: v for k, v in TIMING_STATE_AXES.items() if k in state.columns},
+        **{k: v for k, v in PANEL_SENTIMENT_AXES.items() if k in state.columns},
+    }
     for axis, group in all_axes.items():
         coverage = float(state[axis].notna().mean())
         unique = int(state[axis].nunique(dropna=True))
@@ -224,6 +256,193 @@ def bucketize(values: pd.Series) -> pd.Series:
     out.loc[values.gt(q1) & values.le(q2)] = "mid"
     out.loc[values.gt(q2)] = "high"
     return out
+
+
+def build_daily_factor_metrics(dataset: pd.DataFrame, log) -> pd.DataFrame:
+    rows: list[dict[str, Any]] = []
+    for factor, factor_group in ALPHA_FACTORS.items():
+        if factor not in dataset.columns:
+            continue
+        log(f"daily metrics factor={factor}")
+        prev_top_codes: dict[int, set[str] | None] = {top_n: None for top_n in TOP_NS}
+        for date, day in dataset.groupby("trade_date", sort=True):
+            data = day.dropna(subset=[factor, "label"]).copy()
+            if len(data) < 30:
+                continue
+            row: dict[str, Any] = {
+                "trade_date": date,
+                "year": int(pd.Timestamp(date).year),
+                "month": pd.Timestamp(date).to_period("M").strftime("%Y-%m"),
+                "factor": factor,
+                "factor_group": factor_group,
+                "sample_rows": int(len(data)),
+                "rank_ic": np.nan,
+                "top_decile_return": np.nan,
+                "bottom_decile_return": np.nan,
+                "decile_spread": np.nan,
+                "is_monotonic": np.nan,
+                "score_small_size_rank_corr": np.nan,
+            }
+            if data[factor].nunique() >= 2 and data["label"].nunique() >= 2:
+                row["rank_ic"] = float(data[factor].corr(data["label"], method="spearman"))
+                if "stock_state_small_size" in data and data["stock_state_small_size"].nunique() >= 2:
+                    row["score_small_size_rank_corr"] = float(
+                        data[factor].corr(data["stock_state_small_size"], method="spearman")
+                    )
+            if len(data) >= 50 and data[factor].nunique() >= 10:
+                data["decile"] = pd.qcut(data[factor].rank(method="first"), 10, labels=False) + 1
+                avg = data.groupby("decile")["label"].mean()
+                row["top_decile_return"] = float(avg.get(10, np.nan))
+                row["bottom_decile_return"] = float(avg.get(1, np.nan))
+                row["decile_spread"] = float(avg.get(10, np.nan) - avg.get(1, np.nan))
+                row["is_monotonic"] = bool(avg.is_monotonic_increasing)
+            q80 = data["label"].quantile(0.80)
+            q20 = data["label"].quantile(0.20)
+            for top_n in TOP_NS:
+                if len(data) < max(50, top_n * 5):
+                    continue
+                top = data.nlargest(top_n, factor)
+                codes = set(top["ts_code"].astype(str))
+                prev_codes = prev_top_codes[top_n]
+                turnover = np.nan if prev_codes is None else 1.0 - len(codes & prev_codes) / max(len(codes), 1)
+                prev_top_codes[top_n] = codes
+                row[f"top{top_n}_mean_label"] = float(top["label"].mean())
+                row[f"top{top_n}_positive_ratio"] = float((top["label"] > 0).mean())
+                row[f"top{top_n}_hit_top20_ratio"] = float(top["label"].ge(q80).mean())
+                row[f"top{top_n}_bad_bottom20_ratio"] = float(top["label"].le(q20).mean())
+                row[f"top{top_n}_small_size_mean"] = (
+                    float(top["stock_state_small_size"].mean()) if "stock_state_small_size" in top else np.nan
+                )
+                row[f"top{top_n}_microcap_share"] = (
+                    float(top["stock_state_small_size"].gt(1.0).mean()) if "stock_state_small_size" in top else np.nan
+                )
+                row[f"top{top_n}_turnover_proxy"] = turnover
+                row[f"top{top_n}_codes"] = ",".join(sorted(codes))
+            rows.append(row)
+    return pd.DataFrame(rows)
+
+
+def aggregate_condition_metrics(
+    group: pd.DataFrame,
+    factor: str,
+    factor_group: str,
+    state_axis: str,
+    bucket: str,
+) -> dict[str, Any]:
+    row = {
+        "factor": factor,
+        "factor_group": factor_group,
+        "state_axis": state_axis,
+        "state_bucket": bucket,
+        "sample_days": int(group["trade_date"].nunique()),
+        "sample_rows": int(group["sample_rows"].sum()),
+        "years": int(group["year"].nunique()),
+        "rank_ic_mean": float(group["rank_ic"].mean()),
+        "rank_ic_std": float(group["rank_ic"].std(ddof=1)),
+        "icir": (
+            float(group["rank_ic"].mean() / group["rank_ic"].std(ddof=1) * np.sqrt(252))
+            if group["rank_ic"].notna().sum() > 1 and group["rank_ic"].std(ddof=1) > 0
+            else np.nan
+        ),
+        "positive_ic_ratio": float(group["rank_ic"].gt(0).mean()),
+        "top_decile_mean_label": float(group["top_decile_return"].mean()),
+        "bottom_decile_mean_label": float(group["bottom_decile_return"].mean()),
+        "decile_spread_mean": float(group["decile_spread"].mean()),
+        "positive_decile_spread_ratio": float(group["decile_spread"].gt(0).mean()),
+        "monotonic_ratio": float(group["is_monotonic"].astype("boolean").fillna(False).astype(bool).mean()),
+    }
+    for top_n in TOP_NS:
+        for name in [
+            "mean_label",
+            "positive_ratio",
+            "hit_top20_ratio",
+            "bad_bottom20_ratio",
+            "small_size_mean",
+            "microcap_share",
+            "turnover_proxy",
+        ]:
+            col = f"top{top_n}_{name}"
+            row[col] = float(group[col].mean()) if col in group else np.nan
+    return row
+
+
+def aggregate_yearly_metrics(
+    group: pd.DataFrame,
+    factor: str,
+    factor_group: str,
+    state_axis: str,
+    bucket: str,
+) -> list[dict[str, Any]]:
+    rows = []
+    for year, year_group in group.groupby("year"):
+        rows.append(
+            {
+                "factor": factor,
+                "factor_group": factor_group,
+                "state_axis": state_axis,
+                "state_bucket": bucket,
+                "year": int(year),
+                "sample_days": int(year_group["trade_date"].nunique()),
+                "rank_ic_mean": float(year_group["rank_ic"].mean()),
+                "positive_ic_ratio": float(year_group["rank_ic"].gt(0).mean()),
+                "top5_mean_label": float(year_group["top5_mean_label"].mean()),
+                "top5_bad_bottom20_ratio": float(year_group["top5_bad_bottom20_ratio"].mean()),
+                "top5_microcap_share": float(year_group["top5_microcap_share"].mean()),
+            }
+        )
+    return rows
+
+
+def aggregate_exposure_metrics(
+    group: pd.DataFrame,
+    factor: str,
+    factor_group: str,
+    state_axis: str,
+    bucket: str,
+) -> dict[str, Any]:
+    stock_counts: dict[str, int] = {}
+    for codes in group.get("top5_codes", pd.Series(dtype=str)).dropna():
+        for code in str(codes).split(","):
+            if code:
+                stock_counts[code] = stock_counts.get(code, 0) + 1
+    total_selects = sum(stock_counts.values())
+    top5_stock_share = sum(sorted(stock_counts.values(), reverse=True)[:5]) / total_selects if total_selects else np.nan
+    monthly = group.groupby("month")["top5_mean_label"].mean()
+    positive = monthly[monthly > 0]
+    month_share = float(positive.max() / positive.sum()) if positive.sum() > 0 else np.nan
+    return {
+        "factor": factor,
+        "factor_group": factor_group,
+        "state_axis": state_axis,
+        "state_bucket": bucket,
+        "score_small_size_rank_corr": float(group["score_small_size_rank_corr"].mean()),
+        "top5_microcap_share": float(group["top5_microcap_share"].mean()),
+        "top5_stock_selection_share": float(top5_stock_share),
+        "top_positive_month_return_share": month_share,
+        "unique_top5_stocks": int(len(stock_counts)),
+    }
+
+
+def axis_factor_interaction_summary_from_metrics(
+    metrics: pd.DataFrame,
+    factor: str,
+    factor_group: str,
+    state_axis: str,
+) -> dict[str, Any]:
+    grouped = metrics.groupby("state_bucket")["rank_ic"].mean().dropna()
+    values = grouped.to_dict()
+    return {
+        "factor": factor,
+        "factor_group": factor_group,
+        "state_axis": state_axis,
+        "available_buckets": int(len(grouped)),
+        "ic_range": float(grouped.max() - grouped.min()) if len(grouped) else np.nan,
+        "ic_std_across_buckets": float(grouped.std(ddof=0)) if len(grouped) else np.nan,
+        "best_bucket": max(values, key=values.get) if values else None,
+        "best_bucket_rank_ic": float(grouped.max()) if len(grouped) else np.nan,
+        "worst_bucket": min(values, key=values.get) if values else None,
+        "worst_bucket_rank_ic": float(grouped.min()) if len(grouped) else np.nan,
+    }
 
 
 def conditional_summary(
@@ -625,9 +844,9 @@ def write_report(
         "## Files",
         "- `market_state_axes_daily.csv`",
         "- `market_state_axis_metadata.csv`",
+        "- `factor_daily_metrics.parquet`",
         "- `factor_regime_condition_matrix.csv`",
         "- `factor_regime_condition_yearly.csv`",
-        "- `factor_regime_topn_payoff_daily.csv`",
         "- `factor_regime_style_exposure.csv`",
         "- `factor_regime_interaction_strength.csv`",
         "- `factor_regime_reliability_flags.csv`",
