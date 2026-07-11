@@ -11,7 +11,7 @@ import yaml
 
 from factor_forge.config import load_project
 from factor_forge.data.ingestion import TushareIngestor
-from factor_forge.data.repository import DataVersionRepository
+from factor_forge.data.repository import DataVersionRepository, is_complete_manifest
 from factor_forge.data.tushare_provider import TushareProvider
 from factor_forge.timing.position_model import TimingPositionModelRunner
 from factor_forge.timing.runner import TimingDatasetBuildRunner
@@ -177,7 +177,9 @@ def sync_main_panel(
     def progress(done: int, total: int, date: str) -> None:
         log(f"main ingest {done}/{total}: {date}")
 
-    version = TushareIngestor(project, provider, progress=progress).ingest(start, end)
+    version = TushareIngestor(project, provider, progress=progress).ingest(
+        start, end, version_kind="incremental"
+    )
     log(f"main ingest published increment={version}")
     repo = DataVersionRepository(project.paths.data_root, project.paths.metadata_db)
     if merge_full_history:
@@ -222,10 +224,6 @@ def previous_complete_version(repo: DataVersionRepository, *, exclude: str) -> s
         if is_complete_manifest(manifest):
             return version
     return None
-
-
-def is_complete_manifest(manifest: dict[str, Any]) -> bool:
-    return int(manifest.get("row_count", 0)) > 1_000_000 and str(manifest.get("start_date", "")) <= "2017-01-01"
 
 
 def inspect_main_panel_dates(project_path: Path, required_dates: list[str]) -> dict[str, Any]:

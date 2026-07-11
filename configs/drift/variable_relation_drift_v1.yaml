@@ -1,0 +1,12 @@
+version: 1
+id: variable_relation_drift_v1
+kind: variable_relation_drift
+entity: market_relation
+relations:
+  - {id: turnover_abs_return, x: turnover_rate, y: abs_return_1d, metric: daily_spearman}
+  - {id: stock_industry_coupling, x: stock_return_1d, y: industry_return_1d, metric: daily_spearman}
+  - {id: volatility_short_reversal, x: volatility_20d, y: short_reversal_1d, metric: daily_spearman}
+windows: {recent: 60, medium: 252, baseline: 504}
+detector: {method: cusum, threshold: 2.5, min_persistence_days: 15}
+quality_gate: {min_cross_section_size: 500, min_valid_days_recent: 40}
+universe_field: is_liquid

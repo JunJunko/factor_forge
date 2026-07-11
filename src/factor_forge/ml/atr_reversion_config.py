@@ -19,6 +19,13 @@ class ATRReversionFeatureConfig(StrictModel):
     amount_window: int = Field(default=20, ge=2)
     amount_shock_window: int = Field(default=20, ge=2)
     market_window: int = Field(default=5, ge=1)
+    bollinger_std: float = Field(default=2.0, gt=0)
+    event_pool_threshold: float = Field(default=-0.5)
+    shape_clip: float = Field(default=3.0, gt=0)
+    velocity_window: int = Field(default=5, ge=2)
+    acceleration_window: int = Field(default=5, ge=2)
+    natr_ema_span: int = Field(default=3, ge=1)
+    net_flow_column: str | None = None
     min_listing_days: int = Field(default=60, ge=1)
     winsor_quantile: float = Field(default=0.01, ge=0, lt=0.5)
     cross_sectional_zscore: bool = True
@@ -47,9 +54,10 @@ class ATRReversionPipelineConfig(StrictModel):
     output_root: Path = Path("artifacts/atr_reversion_runs")
     universe_top_n: int | None = 1000
     cache_dataset: bool = True
+    random_seeds: list[int] = Field(default_factory=lambda: [42, 2026, 3407, 8888, 10086])
+    model_variants: list[str] | None = None
 
 
 def load_atr_reversion_config(path: str | Path) -> ATRReversionPipelineConfig:
     with Path(path).open("r", encoding="utf-8") as handle:
         return ATRReversionPipelineConfig.model_validate(yaml.safe_load(handle) or {})
-

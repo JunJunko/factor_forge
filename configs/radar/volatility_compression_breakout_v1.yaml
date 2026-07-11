@@ -1,0 +1,25 @@
+version: 1
+id: volatility_compression_breakout_v1
+kind: volatility_compression_breakout
+description: ATR与近期振幅同步压缩后出现历史高分位突破，并标记量能子类型
+observation_type: relation_anomaly
+data:
+  required_fields: [adj_high, adj_low, adj_close, amount_cny]
+  universe_field: is_liquid
+  entity_field: ts_code
+  date_field: trade_date
+  industry_field: industry_l1_code
+scan: {discovery_window_days: 252, recent_window_days: 20}
+filters: {min_listing_days: 250, exclude_st: true, exclude_suspended: true, exclude_limit_locked: true}
+quality_gate: {min_events: 100, min_unique_stocks: 50, min_unique_industries: 10, max_industry_share: 0.35, max_single_stock_share: 0.05}
+parameters:
+  atr_window: 14
+  range_window: 5
+  breakout_window: 20
+  state_history: {window: 252, min_periods: 120}
+  breakout_history: {window: 252, min_periods: 120}
+  amount_history: {window: 60, min_periods: 40}
+  compression_percentile_lte: 0.10
+  breakout_percentile_gte: 0.90
+  expanded_volume_percentile_gte: 0.70
+  contracted_volume_percentile_lte: 0.30

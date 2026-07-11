@@ -20,10 +20,308 @@ data_app = typer.Typer(help="Build and inspect immutable local data versions")
 factor_app = typer.Typer(help="Validate declarative factor definitions")
 experiment_app = typer.Typer(help="Run staged factor experiments")
 ml_app = typer.Typer(help="Run cross-sectional LightGBM experiments")
+research_app = typer.Typer(help="Track research lineage, budgets, decisions, and run artifacts")
+radar_app = typer.Typer(help="Scan label-free market observations with frozen templates")
+event_study_app = typer.Typer(help="Run matched event studies on frozen observations")
+drift_app = typer.Typer(help="Scan recent market relation drift with frozen templates")
+anomaly_scan_app = typer.Typer(help="Run the frozen latest-market anomaly scan bundle")
 app.add_typer(data_app, name="data")
 app.add_typer(factor_app, name="factor")
 app.add_typer(experiment_app, name="experiment")
 app.add_typer(ml_app, name="ml")
+app.add_typer(research_app, name="research")
+app.add_typer(radar_app, name="radar")
+app.add_typer(event_study_app, name="event-study")
+app.add_typer(drift_app, name="drift")
+app.add_typer(anomaly_scan_app, name="anomaly-scan")
+
+
+@anomaly_scan_app.command("latest")
+def anomaly_scan_latest(
+    config: Path = typer.Option(
+        Path("configs/radar/latest_market_scan_v1.yaml"), "--config"
+    ),
+    data_version: str = typer.Option("latest", "--data-version"),
+    as_of: str | None = typer.Option(None, "--as-of", help="YYYYMMDD; defaults to data end"),
+    sync: bool = typer.Option(
+        True, "--sync/--no-sync",
+        help="Synchronize missing completed trading days before resolving latest",
+    ),
+):
+    """Run exactly eight event templates and two relationship-drift templates."""
+    from factor_forge.radar.batch import MarketAnomalyScanRunner
+
+    _echo_model(MarketAnomalyScanRunner().run(
+        config, data_version=data_version, as_of_date=as_of, sync=sync,
+    ))
+
+
+@drift_app.command("validate-template")
+def drift_validate_template(path: Path):
+    from factor_forge.radar.drift_templates import load_drift_template
+
+    template = load_drift_template(path)
+    typer.echo(
+        f"VALID: {template.id} kind={template.kind} definition_hash={template.definition_hash()}"
+    )
+
+
+@drift_app.command("scan")
+def drift_scan(
+    template: Path = typer.Option(..., "--template"),
+    project_config: Path = typer.Option(Path("configs/project.yaml"), "--project-config"),
+    data_version: str = typer.Option("latest", "--data-version"),
+    as_of: str | None = typer.Option(None, "--as-of"),
+    output_root: Path = typer.Option(Path("artifacts/radar_drifts"), "--output-root"),
+    research_db: Path | None = typer.Option(None, "--research-db"),
+):
+    from factor_forge.radar.drift import RelationDriftRunner
+
+    _echo_model(RelationDriftRunner().run(
+        template, project_config=project_config, data_version=data_version,
+        as_of_date=as_of, output_root=output_root, research_db=research_db,
+    ))
+
+
+@event_study_app.command("validate")
+def event_study_validate(path: Path):
+    from factor_forge.event_study import load_event_study_config
+
+    config = load_event_study_config(path)
+    typer.echo(
+        f"VALID: {config.name} primary={config.inference.primary_stage}/"
+        f"{config.inference.primary_horizon}D"
+    )
+
+
+@event_study_app.command("run")
+def event_study_run(path: Path):
+    from factor_forge.event_study import EventStudyRunner
+
+    _echo_model(EventStudyRunner().run(path))
+
+
+@radar_app.command("validate-template")
+def radar_validate_template(path: Path):
+    from factor_forge.radar import load_radar_template
+
+    template = load_radar_template(path)
+    typer.echo(
+        f"VALID: {template.id} kind={template.kind} definition_hash={template.definition_hash()}"
+    )
+
+
+@radar_app.command("scan")
+def radar_scan(
+    template: Path = typer.Option(..., "--template"),
+    project_config: Path = typer.Option(Path("configs/project.yaml"), "--project-config"),
+    data_version: str = typer.Option("latest", "--data-version"),
+    as_of: str | None = typer.Option(None, "--as-of", help="YYYYMMDD; defaults to data end"),
+    output_root: Path = typer.Option(Path("artifacts/radar_observations"), "--output-root"),
+    research_db: Path | None = typer.Option(None, "--research-db"),
+):
+    from factor_forge.radar import RadarRunner
+
+    result = RadarRunner().run(
+        template, project_config=project_config, data_version=data_version,
+        as_of_date=as_of, output_root=output_root, research_db=research_db,
+    )
+    _echo_model(result)
+
+
+def _research_store(config: Path, db: Path | None):
+    from factor_forge.research_control import ResearchControlStore
+
+    path = db if db is not None else load_project(config).paths.data_root / "research.sqlite3"
+    store = ResearchControlStore(path)
+    store.initialize()
+    return store
+
+
+def _echo_model(value) -> None:
+    payload = value.model_dump(mode="json") if hasattr(value, "model_dump") else value
+    typer.echo(json.dumps(payload, ensure_ascii=False, indent=2, default=json_default))
+
+
+@research_app.command("init")
+def research_init(
+    config: Path = typer.Option(Path("configs/project.yaml")),
+    db: Path | None = typer.Option(None, help="Override research SQLite path"),
+):
+    store = _research_store(config, db)
+    typer.echo(f"Initialized {store.path}")
+
+
+@research_app.command("index-artifacts")
+def research_index_artifacts(
+    artifacts_root: Path = typer.Option(Path("artifacts")),
+    config: Path = typer.Option(Path("configs/project.yaml")),
+    db: Path | None = typer.Option(None, help="Override research SQLite path"),
+):
+    from factor_forge.research_control import ArtifactIndexer
+
+    result = ArtifactIndexer(_research_store(config, db), artifacts_root).index()
+    _echo_model(result)
+
+
+@research_app.command("artifact-summary")
+def research_artifact_summary(
+    config: Path = typer.Option(Path("configs/project.yaml")),
+    db: Path | None = typer.Option(None, help="Override research SQLite path"),
+):
+    _echo_model(_research_store(config, db).artifact_summary())
+
+
+@research_app.command("idea-create")
+def research_idea_create(
+    title: str = typer.Option(...),
+    thesis: str = typer.Option(...),
+    family_id: str = typer.Option(...),
+    target_horizon: int | None = typer.Option(None),
+    idea_id: str | None = typer.Option(None),
+    max_trials: int = typer.Option(5),
+    max_revisions: int = typer.Option(2),
+    max_validation_peeks: int = typer.Option(2),
+    config: Path = typer.Option(Path("configs/project.yaml")),
+    db: Path | None = typer.Option(None),
+):
+    idea = _research_store(config, db).create_idea(
+        title=title, thesis=thesis, family_id=family_id,
+        target_horizon=target_horizon, idea_id=idea_id,
+        max_trials=max_trials, max_revisions=max_revisions,
+        max_validation_peeks=max_validation_peeks,
+    )
+    _echo_model(idea)
+
+
+@research_app.command("hypothesis-add")
+def research_hypothesis_add(
+    idea_id: str,
+    statement: str = typer.Option(...),
+    alternative_to: str | None = typer.Option(None),
+    hypothesis_id: str | None = typer.Option(None),
+    config: Path = typer.Option(Path("configs/project.yaml")),
+    db: Path | None = typer.Option(None),
+):
+    hypothesis = _research_store(config, db).add_hypothesis(
+        idea_id, statement, alternative_to=alternative_to, hypothesis_id=hypothesis_id
+    )
+    _echo_model(hypothesis)
+
+
+@research_app.command("plan-create")
+def research_plan_create(
+    idea_id: str,
+    name: str = typer.Option(...),
+    primary_metric: str = typer.Option(...),
+    hypothesis_id: str | None = typer.Option(None),
+    config_path: Path | None = typer.Option(None),
+    plan_id: str | None = typer.Option(None),
+    project_config: Path = typer.Option(Path("configs/project.yaml"), "--project-config"),
+    db: Path | None = typer.Option(None),
+):
+    plan = _research_store(project_config, db).create_plan(
+        idea_id, name, primary_metric, hypothesis_id=hypothesis_id,
+        config_path=config_path, plan_id=plan_id,
+    )
+    _echo_model(plan)
+
+
+@research_app.command("trial-record")
+def research_trial_record(
+    plan_id: str,
+    data_role: str = typer.Option(..., help="discovery|validation|forward"),
+    status: str = typer.Option(..., help="queued|running|success|failed|cancelled"),
+    external_run_id: str | None = typer.Option(None),
+    artifact_path: Path | None = typer.Option(None),
+    validation_peek: bool = typer.Option(False),
+    revision: bool = typer.Option(False),
+    trial_id: str | None = typer.Option(None),
+    config: Path = typer.Option(Path("configs/project.yaml")),
+    db: Path | None = typer.Option(None),
+):
+    from factor_forge.research_control.models import DataRole, TrialStatus
+
+    trial = _research_store(config, db).record_trial(
+        plan_id=plan_id,
+        data_role=DataRole(data_role.lower()),
+        status=TrialStatus(status.upper()),
+        external_run_id=external_run_id,
+        artifact_path=artifact_path,
+        validation_peek=validation_peek,
+        revision=revision,
+        trial_id=trial_id,
+    )
+    _echo_model(trial)
+
+
+@research_app.command("decision-save")
+def research_decision_save(
+    trial_id: str,
+    action: str = typer.Option(...),
+    reason: str = typer.Option(...),
+    decided_by: str = typer.Option(...),
+    decision_id: str | None = typer.Option(None),
+    config: Path = typer.Option(Path("configs/project.yaml")),
+    db: Path | None = typer.Option(None),
+):
+    from factor_forge.research_control.models import DecisionAction
+
+    decision = _research_store(config, db).save_decision(
+        trial_id, DecisionAction(action.lower()), reason, decided_by, decision_id=decision_id
+    )
+    _echo_model(decision)
+
+
+@research_app.command("idea-show")
+def research_idea_show(
+    idea_id: str,
+    config: Path = typer.Option(Path("configs/project.yaml")),
+    db: Path | None = typer.Option(None),
+):
+    _echo_model(_research_store(config, db).idea_summary(idea_id))
+
+
+@research_app.command("idea-status")
+def research_idea_status(
+    idea_id: str,
+    status: str = typer.Option(..., help="draft|active|paused|closed"),
+    config: Path = typer.Option(Path("configs/project.yaml")),
+    db: Path | None = typer.Option(None),
+):
+    from factor_forge.research_control.models import IdeaStatus
+
+    _echo_model(_research_store(config, db).set_idea_status(idea_id, IdeaStatus(status.upper())))
+
+
+@research_app.command("trial-status")
+def research_trial_status(
+    trial_id: str,
+    status: str = typer.Option(..., help="queued|running|success|failed|cancelled"),
+    config: Path = typer.Option(Path("configs/project.yaml")),
+    db: Path | None = typer.Option(None),
+):
+    from factor_forge.research_control.models import TrialStatus
+
+    _echo_model(_research_store(config, db).set_trial_status(trial_id, TrialStatus(status.upper())))
+
+
+@research_app.command("sealed-access-record")
+def research_sealed_access_record(
+    idea_id: str,
+    requested_by: str = typer.Option(...),
+    approved_by: str = typer.Option(...),
+    reason: str = typer.Option(...),
+    data_start: str = typer.Option(..., help="YYYYMMDD"),
+    data_end: str = typer.Option(..., help="YYYYMMDD"),
+    artifact_path: Path | None = typer.Option(None),
+    config: Path = typer.Option(Path("configs/project.yaml")),
+    db: Path | None = typer.Option(None),
+):
+    audit = _research_store(config, db).record_sealed_access(
+        idea_id, requested_by, approved_by, reason, data_start, data_end, artifact_path
+    )
+    _echo_model(audit)
 
 
 @ml_app.command("run")

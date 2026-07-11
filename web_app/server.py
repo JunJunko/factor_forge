@@ -37,9 +37,12 @@ SHADOW_PORTFOLIO_PATH = LIVE_OPS_ROOT / "shadow_portfolio.json"
 SIGNAL_ROOT = ROOT / "artifacts" / "sell_impact_ranker_live_signals"
 LEGACY_SIGNAL_ROOT = ROOT / "artifacts" / "atr_reversion_live_signals"
 ACTIVE_SIGNAL_SCRIPT = "scripts/sell_impact_ranker_live_signal.py"
-ACTIVE_SIGNAL_ALGORITHM = "sell_impact_cluster_low_vol_ranker_direct_top_v2"
+ACTIVE_SIGNAL_ALGORITHM = "sell_impact_frozen_alpha_signal_reliability_lambda005_v1"
 LIVE_SYNC_SCRIPT = "scripts/live_data_timing_sync.py"
 LIVE_SYNC_SUMMARY_PATH = ROOT / "artifacts" / "timing_position_models" / "latest_live_sync_summary.json"
+FACTOR_STATE_ROOT = ROOT / "artifacts" / "factor_state"
+FACTOR_RELIABILITY_ROOT = ROOT / "artifacts" / "factor_reliability"
+FROZEN_RELIABILITY_ROOT = ROOT / "artifacts" / "frozen_models" / "stock_signal_reliability_lambda005_v1"
 
 
 app = FastAPI(title="Factor Forge Control Panel")
@@ -216,10 +219,16 @@ def _append_increment_to_complete(task_id: str, increment_version: str) -> str:
 def _latest_data_status() -> dict[str, Any]:
     repo = _load_repo()
     version, manifest = repo.load_manifest("latest")
+    sync_summary = _read_json_file(LIVE_SYNC_SUMMARY_PATH) or {}
+    usable_dates = []
+    for item in ((sync_summary.get("panel_gap_before") or {}).get("date_rows") or []):
+        if item.get("status") == "ok" and int(item.get("tradeable_rows") or 0) > 0:
+            usable_dates.append(str(item.get("trade_date") or "")[:10])
     return {
         "version": version,
         "start_date": manifest.get("start_date"),
         "end_date": manifest.get("end_date"),
+        "latest_usable_date": max(usable_dates) if usable_dates else manifest.get("end_date"),
         "row_count": manifest.get("row_count"),
         "source": manifest.get("source"),
         "complete": _is_complete_manifest(manifest),
@@ -331,7 +340,37 @@ def _read_signal(run_dir: Path) -> dict[str, Any]:
     if not summary_path.exists() or not top_path.exists():
         raise FileNotFoundError(f"Missing signal outputs in {run_dir}")
     summary = json.loads(summary_path.read_text(encoding="utf-8"))
-    top = pd.read_csv(top_path).replace({np.nan: None})
+    top = pd.read_csv(top_path)
+    candidate_path = run_dir / "top100_candidates.csv"
+    reliability_impact: dict[str, Any] = {}
+    if candidate_path.exists():
+        candidates = pd.read_csv(candidate_path)
+        if {"ts_code", "alpha_score", "final_score"}.issubset(candidates.columns):
+            candidates["alpha_rank"] = candidates["alpha_score"].rank(method="first", ascending=False).astype(int)
+            candidates["final_rank"] = candidates["final_score"].rank(method="first", ascending=False).astype(int)
+            candidates["rank_change"] = candidates["alpha_rank"] - candidates["final_rank"]
+            candidates["reliability_adjustment"] = candidates["final_score"] - candidates["alpha_score"]
+            impact_cols = [
+                "ts_code",
+                "alpha_rank",
+                "final_rank",
+                "rank_change",
+                "reliability_adjustment",
+            ]
+            top = top.merge(candidates[impact_cols], on="ts_code", how="left")
+            baseline_top = set(candidates.nsmallest(5, "alpha_rank")["ts_code"])
+            enhanced_top = set(candidates.nsmallest(5, "final_rank")["ts_code"])
+            reliability_impact = {
+                "baseline_top5": sorted(baseline_top),
+                "enhanced_top5": sorted(enhanced_top),
+                "top5_replaced_count": len(baseline_top - enhanced_top),
+                "top5_overlap_count": len(baseline_top & enhanced_top),
+                "mean_abs_rank_change_top5": float(top["rank_change"].abs().mean()),
+                "mean_score_adjustment_top5": float(top["reliability_adjustment"].mean()),
+            }
+    if reliability_impact:
+        summary["reliability_impact"] = reliability_impact
+    top = top.replace({np.nan: None})
     return {
         "run_dir": str(run_dir.relative_to(ROOT)),
         "algorithm": summary.get("signal_algorithm") or summary.get("algorithm"),
@@ -358,6 +397,59 @@ def _read_signal(run_dir: Path) -> dict[str, Any]:
             ),
         },
     }
+
+
+def _signal_history_runs(limit: int = 120) -> list[dict[str, Any]]:
+    """Return the newest frozen-strategy signal run for each signal date."""
+    if not SIGNAL_ROOT.exists():
+        return []
+    by_date: dict[str, tuple[float, Path, dict[str, Any]]] = {}
+    for run_dir in SIGNAL_ROOT.iterdir():
+        summary_path = run_dir / "signal_summary.json"
+        top_path = run_dir / "top_recommendations.csv"
+        if not run_dir.is_dir() or not summary_path.exists() or not top_path.exists():
+            continue
+        try:
+            summary = json.loads(summary_path.read_text(encoding="utf-8"))
+            signal_date = pd.Timestamp(summary.get("signal_date")).normalize().date().isoformat()
+        except Exception:
+            continue
+        algorithm = str(summary.get("signal_algorithm") or summary.get("algorithm") or "")
+        if algorithm != ACTIVE_SIGNAL_ALGORITHM:
+            continue
+        mtime = run_dir.stat().st_mtime
+        existing = by_date.get(signal_date)
+        if existing is None or mtime > existing[0]:
+            by_date[signal_date] = (mtime, run_dir, summary)
+
+    items = []
+    for signal_date, (mtime, run_dir, summary) in by_date.items():
+        timing = summary.get("timing_model") or {}
+        items.append(
+            {
+                "signal_date": signal_date,
+                "entry_date": str(summary.get("entry_date_for_timing") or "")[:10],
+                "final_exposure": _clean_float(summary.get("final_exposure")),
+                "top_n": int(summary.get("top_n") or 0),
+                "predictable_candidates": summary.get("predictable_candidates"),
+                "reliability_probability_mean": _clean_float(summary.get("reliability_probability_mean")),
+                "timing_date": str(timing.get("timing_date") or "")[:10],
+                "run_dir": _rel(run_dir),
+                "generated_at": datetime.fromtimestamp(mtime).isoformat(timespec="seconds"),
+            }
+        )
+    return sorted(items, key=lambda item: (item["signal_date"], item["generated_at"]), reverse=True)[:limit]
+
+
+def _signal_history_detail(signal_date: str) -> dict[str, Any] | None:
+    try:
+        normalized = pd.Timestamp(signal_date).normalize().date().isoformat()
+    except Exception:
+        return None
+    for item in _signal_history_runs(limit=10_000):
+        if item["signal_date"] == normalized:
+            return _read_signal(ROOT / item["run_dir"])
+    return None
 
 
 def _rel(path: Path) -> str:
@@ -420,6 +512,112 @@ def _latest_named_dir(root: Path, pattern: str) -> Path | None:
     return max(dirs, key=lambda p: p.stat().st_mtime) if dirs else None
 
 
+def _latest_named_file(root: Path, pattern: str) -> Path | None:
+    if not root.exists():
+        return None
+    files = [p for p in root.glob(pattern) if p.is_file()]
+    return max(files, key=lambda p: p.stat().st_mtime) if files else None
+
+
+def _clean_float(value: Any) -> float | None:
+    number = _as_float(value)
+    return float(number) if np.isfinite(number) else None
+
+
+def _factor_health_state(row: pd.Series) -> str:
+    ic20 = _as_float(row.get("rolling_rank_ic_20"))
+    ic60 = _as_float(row.get("rolling_rank_ic_60"))
+    spread20 = _as_float(row.get("spread_20"))
+    spread60 = _as_float(row.get("spread_60"))
+    ic_velocity = _as_float(row.get("ic_velocity_20_60"))
+    spread_velocity = _as_float(row.get("spread_velocity_20_60"))
+    if ic20 > 0 and spread20 > 0 and ic60 > 0 and spread60 > 0:
+        return "HEALTHY"
+    if ic20 <= 0 and spread20 <= 0:
+        return "RECOVERY" if ic_velocity > 0 and spread_velocity > 0 else "BROKEN"
+    if ic20 > 0 and spread20 > 0 and ic_velocity > 0 and spread_velocity > 0:
+        return "RECOVERY"
+    if ic_velocity < 0 or spread_velocity < 0:
+        return "WEAKENING"
+    return "MIXED"
+
+
+def _factor_monitoring_status(data_status: dict[str, Any], signal: dict[str, Any] | None) -> dict[str, Any]:
+    data_end = pd.to_datetime(
+        data_status.get("latest_usable_date") or data_status.get("end_date"),
+        errors="coerce",
+    )
+    health_path = _latest_named_file(FACTOR_STATE_ROOT, "factor_state_transition_*/factor_health_daily.csv")
+    factor_health: dict[str, Any] | None = None
+    if health_path is not None:
+        try:
+            health = pd.read_csv(health_path, parse_dates=["date"]).sort_values("date")
+            if not health.empty:
+                row = health.iloc[-1]
+                health_date = pd.Timestamp(row["date"]).normalize()
+                lag_days = int((data_end - health_date).days) if not pd.isna(data_end) else None
+                factor_health = {
+                    "date": health_date.date().isoformat(),
+                    "factor_name": row.get("factor_name"),
+                    "state": _factor_health_state(row),
+                    "lag_calendar_days": lag_days,
+                    "is_stale": lag_days is not None and lag_days > 10,
+                    "rolling_rank_ic_20": _clean_float(row.get("rolling_rank_ic_20")),
+                    "rolling_rank_ic_60": _clean_float(row.get("rolling_rank_ic_60")),
+                    "icir_20": _clean_float(row.get("icir_20")),
+                    "spread_20": _clean_float(row.get("spread_20")),
+                    "spread_60": _clean_float(row.get("spread_60")),
+                    "decile_monotonicity": _clean_float(row.get("decile_monotonicity")),
+                    "top_decile_turnover": _clean_float(row.get("top_decile_turnover")),
+                    "market_ret_20": _clean_float(row.get("market_ret_20")),
+                    "market_vol_20": _clean_float(row.get("market_vol_20")),
+                    "path": _rel(health_path),
+                }
+        except Exception:
+            factor_health = {"state": "UNAVAILABLE", "path": _rel(health_path)}
+
+    reliability_path = _latest_named_file(
+        FACTOR_RELIABILITY_ROOT,
+        "factor_reliability_model_v1_*/factor_reliability_daily.csv",
+    )
+    factor_reliability: dict[str, Any] | None = None
+    if reliability_path is not None:
+        try:
+            reliability = pd.read_csv(reliability_path, parse_dates=["date"]).sort_values("date")
+            factor_reliability = {"factor_name": None, "path": _rel(reliability_path)}
+            if not reliability.empty:
+                factor_reliability["factor_name"] = reliability.iloc[-1].get("factor_name")
+                for horizon in (5, 10, 20):
+                    col = f"reliability_{horizon}d"
+                    valid = reliability.loc[pd.to_numeric(reliability.get(col), errors="coerce").notna()]
+                    if not valid.empty:
+                        last = valid.iloc[-1]
+                        factor_reliability[col] = _clean_float(last.get(col))
+                        factor_reliability[f"date_{horizon}d"] = pd.Timestamp(last["date"]).date().isoformat()
+        except Exception:
+            factor_reliability = {"state": "UNAVAILABLE", "path": _rel(reliability_path)}
+
+    summary = (signal or {}).get("summary") or {}
+    stock_reliability = summary.get("stock_signal_reliability") or {}
+    live_reliability = {
+        "signal_date": str(summary.get("signal_date") or "")[:10],
+        "model_name": stock_reliability.get("model_name"),
+        "horizon": stock_reliability.get("horizon"),
+        "lambda": stock_reliability.get("lambda"),
+        "formula": summary.get("final_score_formula"),
+        "probability_mean": _clean_float(summary.get("reliability_probability_mean")),
+        "probability_min": _clean_float(summary.get("reliability_probability_min")),
+        "probability_max": _clean_float(summary.get("reliability_probability_max")),
+        "impact": summary.get("reliability_impact") or {},
+        "frozen_model_ready": (FROZEN_RELIABILITY_ROOT / "signal_reliability_lgbm_10d.txt").exists(),
+    }
+    return {
+        "factor_health": factor_health,
+        "factor_reliability": factor_reliability,
+        "live_stock_reliability": live_reliability,
+    }
+
+
 def _build_dashboard(data_status: dict[str, Any], signal: dict[str, Any] | None) -> dict[str, Any]:
     summary = (signal or {}).get("summary") or {}
     top = (signal or {}).get("top") or []
@@ -427,7 +625,7 @@ def _build_dashboard(data_status: dict[str, Any], signal: dict[str, Any] | None)
     risk_inputs = summary.get("risk_gate_inputs") or {}
     final_exposure = float(summary.get("final_exposure", 0.0) or 0.0) if summary else None
     signal_date = str(summary.get("signal_date", ""))[:10] if summary.get("signal_date") else ""
-    data_end = str(data_status.get("end_date") or "")
+    data_end = str(data_status.get("latest_usable_date") or data_status.get("end_date") or "")
     target_positions = [row for row in top if float(row.get("target_weight") or 0.0) > 0.0]
     signal_day_blocks = [
         row
@@ -436,13 +634,13 @@ def _build_dashboard(data_status: dict[str, Any], signal: dict[str, Any] | None)
     ]
     warnings: list[str] = []
     if signal and signal_date and data_end and signal_date != data_end:
-        warnings.append(f"最新信号日 {signal_date} 与数据截止日 {data_end} 不一致，请确认是否要重新生成。")
+        warnings.append(f"候选股日期为 {signal_date}，最新可用交易日为 {data_end}，建议重新生成交易计划。")
     if final_exposure is not None and final_exposure <= 0.0:
-        warnings.append("最终仓位为 0%，当前建议只观察不建仓。")
+        warnings.append("Timing 给出的新开仓仓位为 0%，当前只观察，不新建仓。")
     if bool(fit_quality.get("flipped")):
         warnings.append("fit-quality 冻结规则正在反向排序，说明近期原始因子方向偏弱。")
     if signal_day_blocks:
-        warnings.append("候选股里存在信号日停牌、ST或涨停开盘标记，次日执行前要复核。")
+        warnings.append("候选股中存在停牌、ST 或涨停开盘标记，执行前必须复核。")
 
     trade_audit = _read_json_file(FROZEN_SENSITIVITY_DIR / "trade_audit_summary.json") or {}
     frozen_year = _frozen_latest_year()
@@ -458,23 +656,23 @@ def _build_dashboard(data_status: dict[str, Any], signal: dict[str, Any] | None)
         _file_link(FROZEN_SENSITIVITY_DIR / "event_iteration_summary.csv", "事件版策略矩阵汇总"),
         _file_link(FROZEN_SENSITIVITY_DIR / "trade_execution_audit.csv", "交易执行审计"),
     ]
-    display_status = "未生成" if not summary else ("观察" if final_exposure is not None and final_exposure <= 0.0 else "可执行")
+    display_status = "NO_SIGNAL" if not summary else ("OBSERVE" if final_exposure is not None and final_exposure <= 0.0 else "READY")
     return {
         "asof": datetime.now().isoformat(timespec="seconds"),
         "status": display_status,
         "warnings": warnings,
         "workflow": [
-            {"name": "数据", "state": "完成" if data_status.get("complete") else "需检查", "detail": f"截止 {data_end or '-'}"},
-            {"name": "信号", "state": "完成" if signal else "未生成", "detail": signal_date or "-"},
+            {"name": "数据", "state": "READY" if data_status.get("complete") else "CHECK", "detail": data_end or "-"},
             {
-                "name": "仓位",
-                "state": "观察" if final_exposure is not None and final_exposure <= 0.0 else "待执行",
-                "detail": "" if final_exposure is None else f"{final_exposure:.0%}",
+                "name": "Timing",
+                "state": "READY" if data_status.get("timing_position") else "CHECK",
+                "detail": str((data_status.get("timing_position") or {}).get("latest_date") or "")[:10] or "-",
             },
+            {"name": "候选", "state": "READY" if signal else "MISSING", "detail": signal_date or "-"},
             {
-                "name": "审计",
-                "state": "通过" if int(trade_audit.get("blocking_trade_issues", 0) or 0) == 0 else "红灯",
-                "detail": f"blocking={trade_audit.get('blocking_trade_issues', '-')}",
+                "name": "执行",
+                "state": "OBSERVE" if final_exposure is not None and final_exposure <= 0.0 else "READY",
+                "detail": "" if final_exposure is None else f"{final_exposure:.0%}",
             },
         ],
         "execution": {
@@ -551,9 +749,9 @@ def _compute_health(signal: dict[str, Any]) -> dict[str, Any]:
             "overall": overall,
             "components": [
                 {
-                    "name": "ranker_direct_top",
+                    "name": "frozen_alpha_reliability",
                     "state": "PASS",
-                    "reason": "validated cluster_stock_state + low_vol ranker direct-top selector",
+                    "reason": "alpha_score + 0.05 * stock_signal_reliability_zscore",
                 },
                 {
                     "name": "timing_position",
@@ -872,6 +1070,9 @@ def _add_shadow_positions(req: ShadowAddRequest) -> dict[str, Any]:
             "rank": row.get("rank"),
             "industry_l1_name": row.get("industry_l1_name"),
             "factor_value": row.get("factor_value"),
+            "alpha_score": row.get("alpha_score"),
+            "signal_reliability_probability": row.get("signal_reliability_probability"),
+            "signal_reliability_zscore": row.get("signal_reliability_zscore"),
             "target_weight": row.get("target_weight"),
             "signal_raw_close": row.get("raw_close"),
             "signal_amount_cny": row.get("amount_cny"),
@@ -1466,12 +1667,30 @@ def status() -> dict[str, Any]:
         except Exception:
             signal = {"run_dir": str(latest_dir.relative_to(ROOT))}
     data_status = _latest_data_status()
+    monitoring = _factor_monitoring_status(data_status, signal)
     return {
         "data": data_status,
-        "default_signal_date": data_status.get("end_date"),
+        "default_signal_date": data_status.get("latest_usable_date") or data_status.get("end_date"),
         "latest_signal": signal,
         "dashboard": _build_dashboard(data_status, signal),
+        "monitoring": monitoring,
     }
+
+
+@app.get("/api/signal-history")
+def signal_history(limit: int = 120) -> dict[str, Any]:
+    return {
+        "algorithm": ACTIVE_SIGNAL_ALGORITHM,
+        "items": _signal_history_runs(limit=max(1, min(int(limit), 500))),
+    }
+
+
+@app.get("/api/signal-history/{signal_date}")
+def signal_history_detail(signal_date: str) -> dict[str, Any]:
+    signal = _signal_history_detail(signal_date)
+    if signal is None:
+        raise HTTPException(status_code=404, detail="signal history record not found")
+    return signal
 
 
 @app.post("/api/sync")

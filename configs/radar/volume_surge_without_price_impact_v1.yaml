@@ -1,0 +1,35 @@
+version: 1
+id: volume_surge_without_price_impact_v1
+kind: volume_surge_without_price_impact
+description: 成交量处于自身历史高分位，但当日绝对收益未产生相称的价格冲击
+observation_type: relation_anomaly
+data:
+  required_fields: [adj_close, volume_shares]
+  universe_field: is_liquid
+  entity_field: ts_code
+  date_field: trade_date
+  industry_field: industry_l1_code
+scan:
+  discovery_window_days: 252
+  recent_window_days: 20
+filters:
+  min_listing_days: 250
+  exclude_st: true
+  exclude_suspended: true
+  exclude_limit_locked: true
+quality_gate:
+  min_events: 300
+  min_unique_stocks: 100
+  min_unique_industries: 15
+  max_industry_share: 0.30
+  max_single_stock_share: 0.03
+parameters:
+  return_horizon: 1
+  abs_return_history:
+    window: 252
+    min_periods: 60
+  volume_history:
+    window: 60
+    min_periods: 20
+  volume_percentile_gte: 0.95
+  abs_return_percentile_lte: 0.50

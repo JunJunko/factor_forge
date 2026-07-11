@@ -14,6 +14,10 @@ def _dates(frame: pd.DataFrame, columns: list[str]) -> pd.DataFrame:
     return result
 
 
+def _schema(frame: pd.DataFrame, columns: list[str], date_columns: list[str]) -> pd.DataFrame:
+    return _dates(frame.reindex(columns=columns), date_columns)
+
+
 class DailyPanelBuilder:
     """Convert source-shaped frames into the versioned standard daily panel."""
 
@@ -35,10 +39,12 @@ class DailyPanelBuilder:
             )
         else:
             base = daily
-        panel = base.merge(
-            _dates(datasets["adj_factor"], ["trade_date"])[["trade_date", "ts_code", "adj_factor"]],
-            on=["trade_date", "ts_code"], how="left",
+        adj_factor = _schema(
+            datasets.get("adj_factor", pd.DataFrame()),
+            ["trade_date", "ts_code", "adj_factor"],
+            ["trade_date"],
         )
+        panel = base.merge(adj_factor, on=["trade_date", "ts_code"], how="left")
         basic = _dates(datasets.get("daily_basic", pd.DataFrame()), ["trade_date"])
         if not basic.empty:
             keep = [c for c in ["trade_date", "ts_code", "total_mv", "circ_mv", "turnover_rate"] if c in basic]

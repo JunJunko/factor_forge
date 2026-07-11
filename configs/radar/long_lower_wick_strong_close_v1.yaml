@@ -1,0 +1,20 @@
+version: 1
+id: long_lower_wick_strong_close_v1
+kind: long_lower_wick_strong_close
+description: 近期偏弱后出现历史极端长下影并收于日内高位
+observation_type: relation_anomaly
+data:
+  required_fields: [adj_open, adj_high, adj_low, adj_close]
+  universe_field: is_liquid
+  entity_field: ts_code
+  date_field: trade_date
+  industry_field: industry_l1_code
+scan: {discovery_window_days: 252, recent_window_days: 20}
+filters: {min_listing_days: 250, exclude_st: true, exclude_suspended: true, exclude_limit_locked: true}
+quality_gate: {min_events: 300, min_unique_stocks: 100, min_unique_industries: 15, max_industry_share: 0.30, max_single_stock_share: 0.03}
+parameters:
+  wick_history: {window: 252, min_periods: 120}
+  weak_return_history: {window: 252, min_periods: 120}
+  lower_wick_percentile_gte: 0.90
+  close_position_gte: 0.70
+  weak_return_percentile_lte: 0.50

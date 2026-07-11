@@ -22,6 +22,17 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+def is_complete_manifest(manifest: dict) -> bool:
+    """Recognize full-history versions, including manifests created before this field existed."""
+    kind = manifest.get("version_kind")
+    if kind is not None:
+        return kind == "complete"
+    return (
+        int(manifest.get("row_count", 0)) > 1_000_000
+        and str(manifest.get("start_date", "9999-12-31")) <= "2017-01-01"
+    )
+
+
 class DataVersionRepository:
     def __init__(self, data_root: str | Path, metadata_db: str | Path):
         self.root = Path(data_root)
@@ -33,7 +44,10 @@ class DataVersionRepository:
         panel: pd.DataFrame,
         raw_datasets: dict[str, pd.DataFrame] | None = None,
         source: str = "tushare",
+        version_kind: str = "complete",
     ) -> str:
+        if version_kind not in {"complete", "incremental"}:
+            raise ValueError("version_kind must be 'complete' or 'incremental'")
         issues = DataQualityValidator().validate(panel)
         if has_blocking_issues(issues):
             detail = "; ".join(f"{item.rule_name}: {item.detail}" for item in issues)
@@ -73,6 +87,7 @@ class DataVersionRepository:
                 "end_date": dates.max().date().isoformat(),
                 "row_count": len(panel),
                 "source": source,
+                "version_kind": version_kind,
                 "files": files,
                 "quality_issues": [item.to_dict() for item in issues],
             }
@@ -99,11 +114,31 @@ class DataVersionRepository:
 
     def resolve(self, version: str) -> str:
         if version == "latest":
+            resolved = self.latest_complete_version()
+            if not resolved:
+                raise FileNotFoundError("No complete published data version exists")
+            return resolved
+        if version == "latest_any":
             resolved = self.metadata.latest_version()
             if not resolved:
                 raise FileNotFoundError("No published data version exists")
             return resolved
         return version
+
+    def latest_complete_version(self) -> str | None:
+        with self.metadata.connect() as connection:
+            rows = connection.execute(
+                "SELECT data_version, manifest_path FROM meta_data_version "
+                "WHERE quality_status='PASSED' ORDER BY created_at DESC"
+            ).fetchall()
+        for row in rows:
+            path = Path(row["manifest_path"])
+            if not path.exists():
+                continue
+            manifest = json.loads(path.read_text(encoding="utf-8"))
+            if is_complete_manifest(manifest):
+                return str(row["data_version"])
+        return None
 
     def load_panel(self, version: str = "latest") -> tuple[str, pd.DataFrame]:
         resolved = self.resolve(version)

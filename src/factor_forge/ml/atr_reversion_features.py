@@ -30,6 +30,43 @@ def rolling_mean(value: pd.Series, stocks: pd.Series, window: int) -> pd.Series:
     return sf._rolling(value, stocks, window, method="mean", min_periods=max(5, window // 2))
 
 
+def rolling_std(value: pd.Series, stocks: pd.Series, window: int, *, shift: int = 0) -> pd.Series:
+    return sf._rolling(
+        value, stocks, window, method="std", min_periods=max(5, window // 2), ddof=0, shift=shift
+    )
+
+
+def lag(value: pd.Series, stocks: pd.Series, periods: int = 1) -> pd.Series:
+    return value.groupby(stocks, sort=False).shift(periods)
+
+
+def ema(value: pd.Series, stocks: pd.Series, span: int) -> pd.Series:
+    """Per-instrument EWM mean, preserving the original long-panel index."""
+    return value.groupby(stocks, sort=False).transform(
+        lambda s: s.ewm(span=span, adjust=False, min_periods=span).mean()
+    )
+
+
+def rolling_slope(value: pd.Series, stocks: pd.Series, window: int) -> pd.Series:
+    """OLS slope over equally spaced observations in a trailing window."""
+    x = np.arange(window, dtype=float)
+    x_centered = x - x.mean()
+    denom = float(np.dot(x_centered, x_centered))
+
+    def _slope(y: np.ndarray) -> float:
+        if len(y) != window or not np.isfinite(y).all():
+            return np.nan
+        return float(np.dot(x_centered, y - y.mean()) / denom)
+
+    out = (
+        value.groupby(stocks, sort=False)
+        .rolling(window, min_periods=window)
+        .apply(_slope, raw=True)
+        .reset_index(level=0, drop=True)
+    )
+    return out.reindex(value.index)
+
+
 def rolling_percentile(value: pd.Series, stocks: pd.Series, window: int) -> pd.Series:
     """Per-stock rolling percentile rank of the current value inside the trailing window."""
     min_periods = min(window, max(2, min(20, window // 2)))

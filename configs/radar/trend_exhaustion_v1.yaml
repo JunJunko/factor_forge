@@ -1,0 +1,21 @@
+version: 1
+id: trend_exhaustion_v1
+kind: trend_exhaustion
+description: 强趋势中的短期速度衰竭，或弱趋势中的跌速改善
+observation_type: relation_anomaly
+data:
+  required_fields: [adj_close]
+  universe_field: is_liquid
+  entity_field: ts_code
+  date_field: trade_date
+  industry_field: industry_l1_code
+scan: {discovery_window_days: 252, recent_window_days: 20}
+filters: {min_listing_days: 250, exclude_st: true, exclude_suspended: true, exclude_limit_locked: true}
+quality_gate: {min_events: 300, min_unique_stocks: 100, min_unique_industries: 15, max_industry_share: 0.30, max_single_stock_share: 0.03}
+parameters:
+  long_horizon: 10
+  short_horizon: 3
+  history: {window: 252, min_periods: 120}
+  strong_percentile_gte: 0.90
+  weak_percentile_lte: 0.10
+  acceleration_extreme: 0.10

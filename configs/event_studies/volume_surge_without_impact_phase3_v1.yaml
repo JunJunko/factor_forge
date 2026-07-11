@@ -1,0 +1,37 @@
+version: 1
+name: volume_surge_without_impact_phase3_v1
+project_config: configs/project.yaml
+observation_dir: artifacts/radar_observations/obs_volume_surge_without_price_impact_v1_f5bbe56139563e8d
+label_data_version: latest
+horizons: [3, 5, 10]
+universe_field: is_liquid
+matching:
+  exact: [trade_date, industry_l1_code]
+  neighbors: 3
+  caliper: 3.0
+  allow_control_reuse: true
+  min_match_rate: 0.70
+  stages:
+    - id: same_date_industry
+      controls: []
+    - id: prior_return_control
+      controls: [prior_return_5d]
+    - id: return_volatility_controls
+      controls: [prior_return_5d, volatility_20d]
+    - id: full_controls
+      controls: [prior_return_5d, volatility_20d, log_avg_amount_20d, log_total_mv]
+inference:
+  primary_horizon: 5
+  primary_stage: full_controls
+  nw_lag_rule: horizon_minus_one
+  fdr_alpha: 0.10
+  min_mature_events: 200
+  min_regime_events: 50
+  severity_groups: 3
+gate:
+  min_abs_nw_t: 2.0
+  max_fdr_q: 0.10
+  min_daily_direction_ratio: 0.52
+  max_abs_smd: 0.20
+output_root: artifacts/radar_event_studies
+research_db: data/research.sqlite3

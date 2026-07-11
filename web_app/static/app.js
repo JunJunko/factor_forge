@@ -1,52 +1,36 @@
 const $ = (id) => document.getElementById(id);
 
-const PIPELINE_STEPS = [
-  ["update_data", "更新数据"],
-  ["generate_all_model_signals", "生成模型信号"],
-  ["compute_health", "计算健康度"],
-  ["decide_position_state", "决定仓位状态"],
-  ["build_orders", "生成订单草稿"],
-  ["execution_audit", "执行审计"],
-  ["shadow_report", "影子报告"],
+const WORKFLOW_LABELS = [
+  ["data", "行情与股票池"],
+  ["Timing", "Timing 仓位"],
+  ["candidates", "候选股排序"],
+  ["execution", "交易计划"],
 ];
 
 let pollTimer = null;
+let latestPayload = null;
 let latestSignal = null;
+let statusInitialized = false;
+let historyItems = [];
+let historySelectedDate = null;
 
 function todayShanghai() {
-  const now = new Date();
   const parts = new Intl.DateTimeFormat("en-CA", {
     timeZone: "Asia/Shanghai",
     year: "numeric",
     month: "2-digit",
     day: "2-digit",
-  }).formatToParts(now);
-  const get = (type) => parts.find((p) => p.type === type).value;
-  return `${get("year")}-${get("month")}-${get("day")}`;
+  }).formatToParts(new Date());
+  const value = (type) => parts.find((part) => part.type === type).value;
+  return `${value("year")}-${value("month")}-${value("day")}`;
 }
 
-function ymdCompact(dateText) {
-  return dateText.replaceAll("-", "");
+function ymdCompact(value) {
+  return String(value || "").replaceAll("-", "");
 }
 
-function fmtPct(value) {
-  const n = Number(value);
-  if (!Number.isFinite(n)) return "";
-  return `${(n * 100).toFixed(2)}%`;
-}
-
-function fmtNum(value, digits = 4) {
-  const n = Number(value);
-  if (!Number.isFinite(n)) return "";
-  return n.toFixed(digits);
-}
-
-function fmtMoney(value) {
-  const n = Number(value);
-  if (!Number.isFinite(n)) return "";
-  if (Math.abs(n) >= 1e8) return `${(n / 1e8).toFixed(2)}亿`;
-  if (Math.abs(n) >= 1e4) return `${(n / 1e4).toFixed(2)}万`;
-  return n.toFixed(0);
+function shortDate(value) {
+  return value ? String(value).slice(0, 10) : "--";
 }
 
 function escapeHtml(value) {
@@ -57,360 +41,497 @@ function escapeHtml(value) {
     .replaceAll('"', "&quot;");
 }
 
-function renderKv(el, rows) {
-  el.innerHTML = rows.map(([k, v, help]) => {
-    const hint = help
-      ? `<span class="helpWrap">
-          <button class="helpDot" type="button" aria-label="${escapeHtml(k)}说明" aria-expanded="false">?</button>
-          <span class="helpTip" role="tooltip">${escapeHtml(help)}</span>
-        </span>`
-      : "";
-    return `<dt><span>${escapeHtml(k)}</span>${hint}</dt><dd>${v ?? ""}</dd>`;
-  }).join("");
+function number(value) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
 }
 
-function closeHelpTips(exceptButton = null) {
-  document.querySelectorAll(".helpDot.isOpen").forEach((button) => {
-    if (button === exceptButton) return;
-    button.classList.remove("isOpen");
-    button.setAttribute("aria-expanded", "false");
-  });
+function fmtNum(value, digits = 3) {
+  const parsed = number(value);
+  return parsed === null ? "--" : parsed.toFixed(digits);
+}
+
+function fmtPct(value, digits = 1) {
+  const parsed = number(value);
+  return parsed === null ? "--" : `${(parsed * 100).toFixed(digits)}%`;
+}
+
+function fmtSigned(value, digits = 3) {
+  const parsed = number(value);
+  if (parsed === null) return "--";
+  return `${parsed >= 0 ? "+" : ""}${parsed.toFixed(digits)}`;
+}
+
+function fmtCny(value) {
+  const parsed = number(value);
+  if (parsed === null) return "--";
+  return new Intl.NumberFormat("zh-CN", {
+    style: "currency",
+    currency: "CNY",
+    maximumFractionDigits: 0,
+  }).format(parsed);
+}
+
+function fmtAmount(value) {
+  const parsed = number(value);
+  if (parsed === null) return "--";
+  if (Math.abs(parsed) >= 1e8) return `${(parsed / 1e8).toFixed(2)}亿`;
+  if (Math.abs(parsed) >= 1e4) return `${(parsed / 1e4).toFixed(1)}万`;
+  return parsed.toFixed(0);
+}
+
+function capital() {
+  return Math.max(0, number($("accountCapital").value) || 110000);
 }
 
 async function api(path, options = {}) {
-  const res = await fetch(path, {
+  const response = await fetch(path, {
     headers: { "Content-Type": "application/json" },
     ...options,
   });
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(text || res.statusText);
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(body || response.statusText);
   }
-  return res.json();
+  return response.json();
 }
 
-function renderPipeline(activeStep = "", done = new Set(), failed = false) {
-  $("pipeline").innerHTML = PIPELINE_STEPS.map(([key, label], idx) => {
-    const cls = failed && key === activeStep ? "failed" : key === activeStep ? "active" : done.has(key) ? "done" : "";
-    return `
-      <div class="pipeStep ${cls}">
-        <span>${idx + 1}</span>
-        <strong>${label}</strong>
-        <em>${key}</em>
-      </div>
-    `;
+function stateClass(state) {
+  const normalized = String(state || "").toUpperCase();
+  if (["READY", "HEALTHY", "PASS", "FULL", "RECOVERY"].includes(normalized)) return "ready";
+  if (["OBSERVE", "CHECK", "WEAKENING", "MIXED", "WATCH", "REDUCED"].includes(normalized)) return "check";
+  if (["FAILED", "BROKEN", "RISK_OFF", "MISSING"].includes(normalized)) return "failed";
+  return "";
+}
+
+function stateBadgeClass(state) {
+  const cls = stateClass(state);
+  return cls === "ready" ? "good" : cls === "failed" ? "bad" : cls === "check" ? "warn" : "neutral";
+}
+
+function stateLabel(state) {
+  const labels = {
+    READY: "已就绪",
+    HEALTHY: "健康",
+    RECOVERY: "恢复中",
+    WEAKENING: "转弱",
+    BROKEN: "失效",
+    MIXED: "分歧",
+    OBSERVE: "观察",
+    CHECK: "待检查",
+    MISSING: "缺失",
+    NO_SIGNAL: "未生成",
+    RISK_OFF: "风险关闭",
+  };
+  return labels[String(state || "").toUpperCase()] || String(state || "--");
+}
+
+function renderWorkflow(items = []) {
+  const mapped = new Map(items.map((item) => [item.name, item]));
+  const aliases = {
+    data: mapped.get("数据"),
+    Timing: mapped.get("Timing"),
+    candidates: mapped.get("候选") || mapped.get("信号"),
+    execution: mapped.get("执行") || mapped.get("仓位"),
+  };
+  $("workflow").innerHTML = WORKFLOW_LABELS.map(([key, label]) => {
+    const item = aliases[key] || {};
+    const state = item.state || "MISSING";
+    return `<div class="workflowItem ${stateClass(state)}">
+      <div class="workflowTop"><strong>${escapeHtml(label)}</strong><span class="statusDot"></span></div>
+      <p>${escapeHtml(item.detail || stateLabel(state))}</p>
+    </div>`;
   }).join("");
 }
 
-function pipelineFromLogs(logs, status) {
-  const done = new Set();
-  let active = "";
-  for (const [key] of PIPELINE_STEPS) {
-    if (logs.some((line) => line.includes(`[${key}]`))) active = key;
-    if (logs.some((line) => line.includes(`[${key}] done`) || line.includes(`[${key}] rows=`) || line.includes(`[${key}] blocking_trade_issues=`) || line.includes(`[${key}] overall=`) || line.includes(`[${key}] state=`))) {
-      done.add(key);
-    }
-  }
-  if (status === "succeeded") {
-    PIPELINE_STEPS.forEach(([key]) => done.add(key));
-    active = "";
-  }
-  renderPipeline(active, done, status === "failed");
-}
-
-function renderSignal(signal) {
-  latestSignal = signal || null;
-  const topRows = $("topRows");
-  const banner = $("exposureBanner");
-  const links = $("fileLinks");
-  topRows.innerHTML = "";
-  links.innerHTML = "";
-  banner.textContent = "等待信号。";
-  if (!signal || !signal.summary) return;
-
-  const s = signal.summary;
-  const exposure = Number(s.final_exposure ?? 0);
-  banner.textContent = exposure <= 0
-    ? `信号日 ${String(s.signal_date).slice(0, 10)}：目标仓位 0%，只观察不建仓。`
-    : `信号日 ${String(s.signal_date).slice(0, 10)}：目标仓位 ${fmtPct(exposure)}，下一交易日开盘执行。`;
-
-  topRows.innerHTML = (signal.top || []).map((row) => `
-    <tr>
-      <td><input class="candidateCheck" type="checkbox" value="${row.ts_code ?? ""}" /></td>
-      <td>${row.rank ?? ""}</td>
-      <td>${row.ts_code ?? ""}</td>
-      <td>${row.name ?? ""}</td>
-      <td>${row.industry_l1_name ?? ""}</td>
-      <td>${fmtNum(row.factor_value, 4)}</td>
-      <td>${fmtPct(row.target_weight)}</td>
-      <td>${fmtNum(row.raw_close, 2)}</td>
-      <td>${fmtMoney(row.amount_cny)}</td>
-    </tr>
-  `).join("");
-
-  links.innerHTML = Object.entries(signal.files || {})
-    .map(([name, path]) => `<a href="/api/file?path=${encodeURIComponent(path)}" target="_blank">${name}</a>`)
-    .join("");
-}
-
-function selectedCandidateCodes() {
-  return Array.from(document.querySelectorAll(".candidateCheck:checked"))
-    .map((el) => el.value)
-    .filter(Boolean);
-}
-
-function renderSellAdvice(data) {
-  const banner = $("sellBanner");
-  const rows = $("sellRows");
-  rows.innerHTML = "";
-  banner.classList.add("hidden");
-  banner.classList.remove("flat");
-  if (!data || !data.items || data.items.length === 0) {
-    banner.classList.remove("hidden");
-    banner.classList.add("flat");
-    banner.textContent = "没有持仓输入。";
-    return;
-  }
-  const exposure = Number(data.final_exposure);
-  banner.classList.remove("hidden");
-  banner.textContent = Number.isFinite(exposure) && exposure <= 0
-    ? `信号日 ${data.signal_date}：组合风控仓位为 0%，所有持仓优先给出卖出建议。`
-    : `信号日 ${data.signal_date}：按持有天数、组合风控和卖压避雷逐项检查。`;
-
-  rows.innerHTML = data.items.map((row) => {
-    const isSell = row.action === "SELL";
-    return `
-      <tr>
-        <td>${row.ts_code ?? ""}</td>
-        <td>${row.name ?? ""}</td>
-        <td>${row.entry_date ?? ""}</td>
-        <td>${row.holding_trade_days ?? ""}</td>
-        <td><span class="badge ${isSell ? "sell" : "hold"}">${row.action ?? ""}</span></td>
-        <td class="reason">${row.reason ?? ""}</td>
-        <td>${fmtNum(row.sell_impact_efficiency, 4)}</td>
-        <td>${fmtNum(row.sell_impact_deviation_60d, 4)}</td>
-        <td>${row.hazard_strict ? "触发" : ""}</td>
-      </tr>
-    `;
-  }).join("");
+function renderTaskWorkflow(logs, status) {
+  const has = (token) => logs.some((line) => line.includes(token));
+  const complete = status === "succeeded";
+  const failed = status === "failed";
+  const states = [
+    { name: "数据", state: complete || has("[update_data] done") || has("[update_data] skipped") ? "READY" : has("[update_data]") ? "RUNNING" : "MISSING", detail: "行情与股票池" },
+    { name: "Timing", state: complete || has("target_position=") ? "READY" : has("[update_data]") ? "RUNNING" : "MISSING", detail: "仓位模型" },
+    { name: "候选", state: complete || has("[generate_all_model_signals] done") ? "READY" : has("[generate_all_model_signals]") ? "RUNNING" : "MISSING", detail: "Alpha + Reliability" },
+    { name: "执行", state: complete ? "READY" : failed ? "FAILED" : has("[compute_health]") ? "RUNNING" : "MISSING", detail: "仓位与审计" },
+  ];
+  renderWorkflow(states);
+  document.querySelectorAll(".workflowItem").forEach((item, index) => {
+    if (states[index].state === "RUNNING") item.classList.add("running");
+  });
 }
 
 function renderWarnings(warnings) {
-  const el = $("dailyWarnings");
-  const rows = warnings || [];
-  el.classList.toggle("hidden", rows.length === 0);
-  el.innerHTML = rows.map((item) => `<div>${item}</div>`).join("");
+  const element = $("dailyWarnings");
+  const items = warnings || [];
+  element.classList.toggle("hidden", items.length === 0);
+  element.innerHTML = items.map((item) => `<div>${escapeHtml(item)}</div>`).join("");
 }
 
-function renderDashboard(dashboard) {
-  if (!dashboard) return;
-  const execution = dashboard.execution || {};
-  const risk = dashboard.risk || {};
-  const fit = risk.fit_quality || {};
-  const gate = risk.risk_gate_inputs || {};
-  const audit = dashboard.research_audit || {};
-  const tradeAudit = audit.trade_audit || {};
-  const latestYear = audit.frozen_latest_year || {};
-  const sensitivity = audit.frozen_sensitivity || {};
+function plannedRows(signal) {
+  const account = capital();
+  return (signal?.top || []).map((row) => {
+    const weight = number(row.target_weight) || 0;
+    const close = number(row.raw_close) || 0;
+    const targetAmount = account * weight;
+    const lotCost = close * 100;
+    const shares = lotCost > 0 ? Math.floor(targetAmount / lotCost) * 100 : 0;
+    return {
+      ...row,
+      weight,
+      targetAmount,
+      shares,
+      deployableAmount: shares * close,
+      lotBlocked: weight > 0 && shares === 0,
+    };
+  });
+}
 
-  $("decisionBadge").textContent = dashboard.status || "-";
-  $("decisionBadge").className = `decisionBadge ${dashboard.status === "观察" ? "watch" : "ok"}`;
-  $("decisionText").textContent = execution.final_exposure <= 0
-    ? "当前主决策是不建仓，只保留候选观察和持仓卖出检查。"
-    : "当前允许按目标仓位生成订单草稿，执行前仍需确认次日开盘可成交。";
-  renderWarnings(dashboard.warnings);
+function renderDecision(signal) {
+  const summary = signal?.summary || {};
+  const exposure = number(summary.final_exposure);
+  const rows = plannedRows(signal);
+  const deployable = rows.reduce((total, row) => total + row.deployableAmount, 0);
+  const planned = capital() * (exposure || 0);
+  const execution = shortDate(summary.entry_date_for_timing);
+  const signalDate = shortDate(summary.signal_date);
 
-  renderKv($("executionSummary"), [
-    ["信号日", execution.signal_date, "这批候选股使用哪一天收盘后可得的数据生成。实盘只能在之后的交易日执行。"],
-    ["执行口径", execution.intended_execution === "next_trade_day_open" ? "下一交易日开盘" : execution.intended_execution, "确认是否严格用下一交易日开盘成交，不用信号日收盘价。"],
-    ["最终仓位", fmtPct(execution.final_exposure), "今日决策的最终资金暴露。0% 表示不新建仓，只观察或处理已有持仓。"],
-    ["目标持仓", `${execution.target_position_count ?? ""} / ${execution.candidate_count ?? ""}`, "前者是实际分配权重的股票数，后者是页面展示的候选数。"],
-    ["信号阻塞", execution.signal_day_block_count, "候选股在信号日已经发现的停牌、ST、涨停开盘等风险标记数量。执行前还要看下一交易日。"],
-  ]);
+  $("timingExposure").textContent = exposure === null ? "--" : fmtPct(exposure, 0);
+  $("plannedCapital").textContent = exposure === null ? "--" : fmtCny(planned);
+  $("deployableCapital").textContent = exposure === null ? "--" : fmtCny(deployable);
+  $("executionDate").textContent = execution;
 
-  renderKv($("riskSummary"), [
-    ["Payoff门控", fmtPct(risk.risk_gate), "策略自身最近已完成 Top5 批次支持的仓位比例。越低越说明近期收益证据不足。"],
-    ["10日净收益", fmtPct(gate.payoff_mean_net_10d), "最近窗口内 Top5 批次持有10日、扣20bps成本后的平均收益。"],
-    ["10日LCB", fmtPct(gate.payoff_lcb_net_10d), "保守下界。为负表示均值虽可能为正，但稳定性还不够，仓位应打折。"],
-    ["有效样本", fmtNum(gate.payoff_effective_obs, 1), "按10日持有重叠折算后的有效样本数，比原始日度样本更接近真实独立观察数。"],
-    ["HMM仓位", fmtPct(risk.hmm_exposure), "市场状态模块给出的仓位。为0时，即使候选股有分数也不新开仓。"],
-    ["fit方向", Number(fit.score_direction) < 0 ? "反向" : "正向", "冻结规则判断模型近期排序方向。反向表示近期高分组表现弱于低分组，分数已反向使用。"],
-  ]);
+  if (!signal?.summary) {
+    $("decisionHeading").textContent = "等待生成交易计划";
+    $("decisionText").textContent = "选择信号日期后运行主链路。";
+    return;
+  }
+  if ((exposure || 0) <= 0) {
+    $("decisionHeading").textContent = "今日不新建仓";
+    $("decisionText").textContent = `${signalDate} 收盘信号已生成，Timing 仓位为 0%。已有持仓仍按卖出规则检查。`;
+    return;
+  }
+  const blocked = rows.filter((row) => row.lotBlocked).length;
+  $("decisionHeading").textContent = `${execution} 开盘，按 ${fmtPct(exposure, 0)} 仓位执行`;
+  $("decisionText").textContent = blocked
+    ? `模型推荐 ${rows.length} 只股票；按当前资金估算，有 ${blocked} 只不足一手，实际可部署金额低于模型计划。`
+    : `模型推荐 ${rows.length} 只股票，整手估算可以覆盖全部候选；开盘前复核停牌与涨跌停状态。`;
+}
 
-  renderKv($("auditSummary"), [
-    ["执行红灯", tradeAudit.blocking_trade_issues ?? "", "交易审计发现的硬错误数量。大于0时不要直接按订单执行。"],
-    ["最近年收益", latestYear.year ? `${latestYear.year}: ${fmtPct(latestYear.return)}` : "", "冻结策略在最近测试年度的绝对收益，用来感知最近环境是否友好。"],
-    ["最近年超额", fmtPct(latestYear.excess_return), "相对中证1000基准的最近年度超额。比绝对收益更适合判断策略是否真有贡献。"],
-  ]);
+function renderCandidates(signal) {
+  latestSignal = signal || null;
+  const rows = plannedRows(signal);
+  const tbody = $("topRows");
+  const summary = signal?.summary || {};
 
-  $("auditLinks").innerHTML = (audit.files || [])
-    .map((item) => `<a href="/api/file?path=${encodeURIComponent(item.path)}" target="_blank">${item.label}</a>`)
+  if (!rows.length) {
+    tbody.innerHTML = '<tr><td colspan="11" class="emptyCell">暂无交易计划</td></tr>';
+    $("candidateSummary").textContent = "尚未生成候选股。";
+    $("allocationWarning").classList.add("hidden");
+    $("fileLinks").innerHTML = "";
+    renderDecision(signal);
+    return;
+  }
+
+  tbody.innerHTML = rows.map((row) => {
+    const rankChange = number(row.rank_change) || 0;
+    const movementClass = rankChange > 0 ? "up" : rankChange < 0 ? "down" : "flat";
+    const movement = rankChange > 0 ? `上升 ${rankChange}` : rankChange < 0 ? `下降 ${Math.abs(rankChange)}` : "不变";
+    const lotText = row.lotBlocked ? "不足一手" : `${row.shares.toLocaleString("zh-CN")} 股`;
+    return `<tr>
+      <td class="checkCell"><input class="candidateCheck" type="checkbox" value="${escapeHtml(row.ts_code)}" ${row.weight > 0 ? "checked" : ""} /></td>
+      <td><strong>${row.final_rank ?? row.rank ?? "--"}</strong><div class="rankMove ${movementClass}">${movement}</div></td>
+      <td><div class="stockName">${escapeHtml(row.name)}</div><div class="stockCode">${escapeHtml(row.ts_code)}</div></td>
+      <td>${escapeHtml(row.industry_l1_name || "--")}</td>
+      <td>${row.alpha_rank ?? "--"}</td>
+      <td><strong>${fmtPct(row.signal_reliability_probability, 1)}</strong></td>
+      <td class="scoreBoost">${fmtSigned(row.reliability_adjustment, 4)}</td>
+      <td>${fmtPct(row.weight, 1)}</td>
+      <td>${fmtCny(row.targetAmount)}</td>
+      <td class="${row.lotBlocked ? "lotBlocked" : "tradeReady"}">${lotText}</td>
+      <td>¥${fmtNum(row.raw_close, 2)}</td>
+    </tr>`;
+  }).join("");
+
+  const blocked = rows.filter((row) => row.lotBlocked);
+  const deployable = rows.reduce((total, row) => total + row.deployableAmount, 0);
+  const warning = $("allocationWarning");
+  warning.classList.toggle("hidden", blocked.length === 0);
+  warning.textContent = blocked.length
+    ? `${blocked.map((row) => row.name).join("、")} 按目标权重不足一手。整手估算可部署 ${fmtCny(deployable)}；未自动把剩余资金转配给其他股票。`
+    : "";
+
+  $("candidateSummary").textContent = `${shortDate(summary.signal_date)} 收盘后生成，计划在 ${shortDate(summary.entry_date_for_timing)} 开盘执行。`;
+  const fileLabels = {
+    summary: "信号摘要",
+    top_recommendations: "Top5 CSV",
+    top100_candidates: "Top100 CSV",
+    report: "信号报告",
+    run_log: "运行日志",
+  };
+  $("fileLinks").innerHTML = Object.entries(signal.files || {})
+    .map(([name, path]) => `<a href="/api/file?path=${encodeURIComponent(path)}" target="_blank">${escapeHtml(fileLabels[name] || name)}</a>`)
+    .join("");
+  renderDecision(signal);
+}
+
+function renderHealth(monitoring) {
+  const health = monitoring?.factor_health;
+  if (!health) {
+    $("healthState").textContent = "无数据";
+    $("healthState").className = "stateBadge neutral";
+    $("healthFreshness").textContent = "尚未找到 factor_health_daily。";
+    $("healthMetrics").innerHTML = "";
+    return;
+  }
+  $("healthState").textContent = stateLabel(health.state);
+  $("healthState").className = `stateBadge ${stateBadgeClass(health.state)}`;
+  $("healthFreshness").textContent = health.is_stale
+    ? `健康度截至 ${health.date}，滞后 ${health.lag_calendar_days} 个自然日。该指标依赖已兑现收益，仅作监控，不直接改变今日仓位。`
+    : `健康度截至 ${health.date}，当前状态用于监控因子排序质量。`;
+  const metrics = [
+    ["20日 RankIC", fmtNum(health.rolling_rank_ic_20, 3)],
+    ["60日 RankIC", fmtNum(health.rolling_rank_ic_60, 3)],
+    ["20日 ICIR", fmtNum(health.icir_20, 2)],
+    ["20日 Spread", fmtPct(health.spread_20, 2)],
+    ["60日 Spread", fmtPct(health.spread_60, 2)],
+    ["分层单调性", fmtNum(health.decile_monotonicity, 2)],
+  ];
+  $("healthMetrics").innerHTML = metrics
+    .map(([label, value]) => `<div><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value)}</dd></div>`)
     .join("");
 }
 
-function renderDailyResult(result) {
-  if (!result) return;
-  const state = result.position_state || {};
-  const health = result.health || {};
-  const audit = result.execution_audit || {};
-  $("decisionBadge").textContent = state.state || "-";
-  $("decisionBadge").className = `decisionBadge ${state.state === "FLAT" || state.state === "OBSERVE" ? "watch" : "ok"}`;
-  $("decisionText").textContent = `${state.reason || ""} 健康度：${health.overall || "-"}；执行红灯：${audit.blocking_trade_issues ?? "-"}`;
-  const files = result.files || {};
-  $("auditLinks").innerHTML = Object.entries(files)
-    .map(([name, path]) => `<a href="/api/file?path=${encodeURIComponent(path)}" target="_blank">${name}</a>`)
+function renderReliability(monitoring, signal) {
+  const live = monitoring?.live_stock_reliability || {};
+  const impact = live.impact || signal?.summary?.reliability_impact || {};
+  const rows = plannedRows(signal);
+  $("reliabilityMean").textContent = live.probability_mean === null || live.probability_mean === undefined
+    ? "--"
+    : `均值 ${fmtPct(live.probability_mean, 1)}`;
+  $("reliabilityMean").className = `stateBadge ${number(live.probability_mean) >= 0.65 ? "good" : "warn"}`;
+  if (!rows.length) {
+    $("reliabilitySummary").textContent = "等待最新股票可靠性结果。";
+    $("reliabilityRows").innerHTML = "";
+    return;
+  }
+  const replaced = impact.top5_replaced_count ?? "--";
+  $("reliabilitySummary").textContent = `冻结公式 alpha_score + 0.05 × reliability_zscore；相对纯 Alpha，Top5 替换 ${replaced} 只。Reliability 只调整排序，Timing 单独控制仓位。`;
+  $("reliabilityRows").innerHTML = rows.map((row) => {
+    const change = number(row.rank_change) || 0;
+    const cls = change > 0 ? "up" : change < 0 ? "down" : "flat";
+    const movement = change > 0 ? `↑ ${change}` : change < 0 ? `↓ ${Math.abs(change)}` : "--";
+    return `<div class="rankImpactRow">
+      <strong>${escapeHtml(row.name)} <span class="stockCode">${escapeHtml(row.ts_code)}</span></strong>
+      <span class="probability">${fmtPct(row.signal_reliability_probability, 1)}</span>
+      <span class="movement rankMove ${cls}">${row.alpha_rank ?? "--"} → ${row.final_rank ?? row.rank ?? "--"} ${movement}</span>
+    </div>`;
+  }).join("");
+}
+
+function renderDetails(payload) {
+  const data = payload.data || {};
+  const timing = data.timing_position || {};
+  const summary = payload.latest_signal?.summary || {};
+  const detailRows = [
+    ["数据版本", data.version || "--"],
+    ["面板范围", `${shortDate(data.start_date)} 至 ${shortDate(data.end_date)}`],
+    ["可用交易日", shortDate(data.latest_usable_date)],
+    ["数据行数", number(data.row_count)?.toLocaleString("zh-CN") || "--"],
+    ["Timing 日期", shortDate(timing.latest_date)],
+    ["Timing 仓位", fmtPct(timing.target_position, 0)],
+  ];
+  $("dataStatus").innerHTML = detailRows.map(([key, value]) => `<dt>${escapeHtml(key)}</dt><dd>${escapeHtml(value)}</dd>`).join("");
+
+  const signalRows = [
+    ["信号日期", shortDate(summary.signal_date)],
+    ["执行日期", shortDate(summary.entry_date_for_timing)],
+    ["模型", summary.model || "--"],
+    ["算法版本", summary.signal_algorithm || "--"],
+    ["Selector", summary.selector || "--"],
+    ["候选样本", summary.predictable_candidates ?? "--"],
+  ];
+  $("signalStatus").innerHTML = signalRows.map(([key, value]) => `<dt>${escapeHtml(key)}</dt><dd>${escapeHtml(value)}</dd>`).join("");
+
+  $("auditLinks").innerHTML = (payload.dashboard?.research_audit?.files || [])
+    .map((item) => `<a href="/api/file?path=${encodeURIComponent(item.path)}" target="_blank">${escapeHtml(item.label)}</a>`)
     .join("");
+}
+
+function renderHistoryList(items) {
+  historyItems = items || [];
+  $("historySummary").textContent = historyItems.length
+    ? `已归档 ${historyItems.length} 个信号日；同一日期只显示最新一次冻结策略运行。`
+    : "当前冻结策略尚未生成可浏览的历史信号。";
+  $("historyRows").innerHTML = historyItems.length
+    ? historyItems.map((item) => `<tr>
+        <td><strong>${shortDate(item.signal_date)}</strong><div class="stockCode">${item.predictable_candidates ?? "--"} 个候选</div></td>
+        <td>${shortDate(item.entry_date)}</td>
+        <td>${fmtPct(item.final_exposure, 0)}</td>
+        <td>${fmtPct(item.reliability_probability_mean, 1)}</td>
+        <td><button class="historyViewButton ${item.signal_date === historySelectedDate ? "active" : ""}" data-history-date="${escapeHtml(item.signal_date)}">查看</button></td>
+      </tr>`).join("")
+    : '<tr><td colspan="5" class="emptyCell">暂无历史记录</td></tr>';
+}
+
+function renderHistoryDetail(signal, item) {
+  const summary = signal?.summary || {};
+  const rows = signal?.top || [];
+  if (!signal?.summary) {
+    $("historyDetailTitle").textContent = "选择一个信号日";
+    $("historyRunStamp").textContent = "";
+    $("historyMetrics").innerHTML = "";
+    $("historyCandidateRows").innerHTML = '<tr><td colspan="5" class="emptyCell">选择左侧记录查看当日 Top5</td></tr>';
+    return;
+  }
+  $("historyDetailTitle").textContent = `${shortDate(summary.signal_date)} 的推荐快照`;
+  $("historyRunStamp").textContent = item?.generated_at ? `生成于 ${item.generated_at.replace("T", " ")}` : "";
+  const metrics = [
+    ["执行日", shortDate(summary.entry_date_for_timing)],
+    ["Timing 仓位", fmtPct(summary.final_exposure, 0)],
+    ["Reliability 均值", fmtPct(summary.reliability_probability_mean, 1)],
+    ["可预测候选", summary.predictable_candidates ?? "--"],
+  ];
+  $("historyMetrics").innerHTML = metrics
+    .map(([label, value]) => `<div><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value)}</dd></div>`)
+    .join("");
+  $("historyCandidateRows").innerHTML = rows.length
+    ? rows.map((row) => `<tr>
+        <td>${row.final_rank ?? row.rank ?? "--"}</td>
+        <td><strong>${escapeHtml(row.name || row.ts_code)}</strong><div class="stockCode">${escapeHtml(row.ts_code)}</div></td>
+        <td>${row.alpha_rank ?? "--"}</td>
+        <td>${fmtPct(row.signal_reliability_probability, 1)}</td>
+        <td>${fmtPct(row.target_weight, 1)}</td>
+      </tr>`).join("")
+    : '<tr><td colspan="5" class="emptyCell">该日没有候选股</td></tr>';
+}
+
+async function loadHistory(signalDate) {
+  const date = shortDate(signalDate);
+  if (date === "--") return;
+  historySelectedDate = date;
+  const signal = await api(`/api/signal-history/${encodeURIComponent(date)}`);
+  const item = historyItems.find((entry) => entry.signal_date === date);
+  renderHistoryList(historyItems);
+  renderHistoryDetail(signal, item);
+}
+
+async function refreshHistory() {
+  const payload = await api("/api/signal-history?limit=120");
+  const items = payload.items || [];
+  renderHistoryList(items);
+  const target = items.some((item) => item.signal_date === historySelectedDate)
+    ? historySelectedDate
+    : items[0]?.signal_date;
+  if (target) await loadHistory(target);
+  else renderHistoryDetail(null, null);
+}
+
+function renderStatus(payload) {
+  latestPayload = payload;
+  const signal = payload.latest_signal;
+  renderWorkflow(payload.dashboard?.workflow || []);
+  renderWarnings(payload.dashboard?.warnings || []);
+  renderCandidates(signal);
+  renderHealth(payload.monitoring);
+  renderReliability(payload.monitoring, signal);
+  renderDetails(payload);
+  $("lastRefresh").textContent = `刷新于 ${new Date().toLocaleTimeString("zh-CN", { hour12: false })}`;
+}
+
+function renderSellAdvice(data) {
+  const items = data?.items || [];
+  const banner = $("sellBanner");
+  banner.classList.toggle("hidden", items.length === 0);
+  banner.textContent = items.length ? `已检查 ${items.length} 只持仓，卖出建议 ${items.filter((item) => item.action === "SELL").length} 只。` : "";
+  $("sellRows").innerHTML = items.length
+    ? items.map((row) => `<tr>
+        <td><strong>${escapeHtml(row.name || row.ts_code)}</strong><div class="stockCode">${escapeHtml(row.ts_code)}</div></td>
+        <td>${row.holding_trade_days ?? "--"}</td>
+        <td><span class="actionBadge ${row.action === "SELL" ? "sell" : "hold"}">${escapeHtml(row.action)}</span></td>
+        <td>${escapeHtml(row.reason || "--")}</td>
+      </tr>`).join("")
+    : '<tr><td colspan="4" class="emptyCell">暂无卖出检查</td></tr>';
 }
 
 function renderShadowPortfolio(data) {
   const summary = data?.summary || {};
   const rows = data?.positions || [];
-  const text = rows.length
-    ? `latest ${String(summary.latest_date || "").slice(0, 10)}；持仓 ${summary.position_count ?? 0}，卖出建议 ${summary.sell_count ?? 0}，已评估 ${summary.evaluated_count ?? 0}，待入场 ${summary.pending_count ?? 0}，阻塞 ${summary.blocked_count ?? 0}，平均收益 ${fmtPct(summary.avg_shadow_return)}，胜率 ${fmtPct(summary.win_rate)}`
+  $("shadowSummary").textContent = rows.length
+    ? `开放持仓 ${summary.position_count ?? 0} 只，卖出建议 ${summary.sell_count ?? 0} 只，平均收益 ${fmtPct(summary.avg_shadow_return, 2)}。`
     : "尚未加入影子持仓。";
-  $("shadowSummary").textContent = text;
-  $("shadowRows").innerHTML = rows.map((row) => {
-    const ret = Number(row.shadow_return);
-    const cls = Number.isFinite(ret) && ret < 0 ? "neg" : Number.isFinite(ret) && ret > 0 ? "pos" : "";
-    const id = String(row.id ?? "");
-    const isClosed = String(row.status ?? "OPEN") === "CLOSED";
-    const sellAction = row.sell_action || "";
-    const isSell = sellAction === "SELL";
-    const actions = id
-      ? `<div class="rowActions">
-          ${isClosed ? `<span class="mutedMini">已卖出</span>` : `<button class="miniBtn sellBtn" data-shadow-action="sell" data-position-id="${id}" onclick="handleShadowAction(event, 'sell', '${id}')">卖出</button>`}
-          <button class="miniBtn dangerBtn" data-shadow-action="delete" data-position-id="${id}" onclick="handleShadowAction(event, 'delete', '${id}')">删除</button>
-        </div>`
-      : "";
-    return `
-      <tr>
-        <td>${row.ts_code ?? ""}</td>
-        <td>${row.name ?? ""}</td>
-        <td>${String(row.signal_date ?? "").slice(0, 10)}</td>
-        <td>${String(row.entry_date ?? "").slice(0, 10)}</td>
-        <td><span class="statusPill">${row.eval_status ?? row.status ?? ""}</span></td>
-        <td>${row.holding_trade_days ?? ""}</td>
-        <td>${fmtNum(row.entry_raw_open, 2)}</td>
-        <td>${fmtNum(row.mark_raw_close, 2)}</td>
-        <td class="${cls}">${fmtPct(row.shadow_return)}</td>
-        <td><span class="badge ${isSell ? "sell" : "hold"}">${sellAction}</span></td>
-        <td class="reason">${row.sell_reason ?? ""}</td>
-        <td>${fmtNum(row.sell_impact_efficiency, 4)}</td>
-        <td>${fmtNum(row.sell_impact_deviation_60d, 4)}</td>
-        <td>${row.hazard_strict ? "触发" : ""}</td>
-        <td>${actions}</td>
-      </tr>
-    `;
-  }).join("");
+  $("shadowRows").innerHTML = rows.length
+    ? rows.map((row) => {
+        const returnValue = number(row.shadow_return);
+        const closed = String(row.status || "OPEN") === "CLOSED";
+        return `<tr>
+          <td><strong>${escapeHtml(row.name || row.ts_code)}</strong><div class="stockCode">${escapeHtml(row.ts_code)}</div></td>
+          <td>${row.holding_trade_days ?? "--"}</td>
+          <td class="${returnValue > 0 ? "positive" : returnValue < 0 ? "negative" : ""}">${fmtPct(returnValue, 2)}</td>
+          <td><span class="actionBadge ${row.sell_action === "SELL" ? "sell" : "hold"}">${escapeHtml(row.sell_action || "HOLD")}</span></td>
+          <td>${closed ? "已卖出" : `<button class="miniButton" data-shadow-action="sell" data-position-id="${escapeHtml(row.id)}">卖出</button>`} <button class="miniButton" data-shadow-action="delete" data-position-id="${escapeHtml(row.id)}">删除</button></td>
+        </tr>`;
+      }).join("")
+    : '<tr><td colspan="5" class="emptyCell">暂无影子持仓</td></tr>';
 }
 
-async function updateShadowPosition(positionId, action) {
-  if (!positionId) return;
-  if (action === "delete" && !confirm("删除这条影子持仓？此操作用于清理误触记录。")) return;
-  const data = await api(`/api/shadow-portfolio/${action}`, {
-    method: "POST",
-    body: JSON.stringify({ position_id: positionId }),
+function selectedCandidateCodes() {
+  return Array.from(document.querySelectorAll(".candidateCheck:checked")).map((input) => input.value).filter(Boolean);
+}
+
+function setBusy(busy) {
+  ["dailyRunBtn", "syncBtn", "signalBtn", "sellAdviceBtn", "addShadowBtn", "refreshShadowBtn", "refreshBtn", "refreshHistoryBtn"].forEach((id) => {
+    if ($(id)) $(id).disabled = busy;
   });
-  renderShadowPortfolio(data.portfolio);
-  $("taskMeta").textContent = action === "delete" ? "已删除影子持仓。" : "已卖出影子持仓。";
-}
-
-function handleShadowAction(event, action, positionId) {
-  event.preventDefault();
-  event.stopPropagation();
-  setBusy(true);
-  updateShadowPosition(positionId, action)
-    .catch((err) => {
-      $("taskMeta").textContent = String(err);
-      $("logs").textContent = String(err);
-    })
-    .finally(() => setBusy(false));
+  $("runStatus").textContent = busy ? "运行中" : "就绪";
 }
 
 async function refreshShadowPortfolio() {
-  const data = await api("/api/shadow-portfolio");
-  renderShadowPortfolio(data);
-}
-
-async function addSelectedToShadow() {
-  const codes = selectedCandidateCodes();
-  if (!codes.length) throw new Error("请先勾选候选股。");
-  const summary = latestSignal?.summary;
-  const signalDate = summary?.signal_date ? String(summary.signal_date).slice(0, 10) : $("signalDate").value;
-  const data = await api("/api/shadow-portfolio/add", {
-    method: "POST",
-    body: JSON.stringify({ signal_date: signalDate, ts_codes: codes }),
-  });
-  renderShadowPortfolio(data.portfolio);
-  $("taskMeta").textContent = `已加入影子持仓：${(data.added || []).length} 个`;
+  renderShadowPortfolio(await api("/api/shadow-portfolio"));
 }
 
 async function refreshStatus() {
-  const data = await api("/api/status");
-  const timing = data.data?.timing_position || {};
-  renderKv($("dataStatus"), [
-    ["版本", data.data?.version],
-    ["范围", `${data.data?.start_date ?? ""} ~ ${data.data?.end_date ?? ""}`],
-    ["行数", data.data?.row_count?.toLocaleString?.() ?? data.data?.row_count],
-    ["完整面板", data.data?.complete ? "是" : "否"],
-    ["Timing date", timing.latest_date ? String(timing.latest_date).slice(0, 10) : ""],
-    ["Timing position", Number.isFinite(Number(timing.target_position)) ? fmtPct(timing.target_position) : ""],
-  ]);
-  const summary = data.latest_signal?.summary;
-  const defaultSignalDate = data.default_signal_date || data.data?.end_date || (summary?.signal_date ? String(summary.signal_date).slice(0, 10) : "");
-  if (defaultSignalDate) {
-    $("signalDate").value = String(defaultSignalDate).slice(0, 10);
+  const payload = await api("/api/status");
+  const defaultDate = shortDate(payload.default_signal_date);
+  if (!statusInitialized && defaultDate !== "--") {
+    $("signalDate").value = defaultDate;
+    $("syncStart").value = ymdCompact(defaultDate);
+    $("syncEnd").value = ymdCompact(defaultDate);
+    statusInitialized = true;
   }
-  renderKv($("signalStatus"), [
-    ["目录", data.latest_signal?.run_dir],
-    ["信号日", summary?.signal_date ? String(summary.signal_date).slice(0, 10) : ""],
-    ["算法", summary?.signal_algorithm || summary?.model],
-    ["排序方向", summary?.fit_quality ? (Number(summary.fit_quality.score_direction) < 0 ? "反向" : "正向") : ""],
-    ["最终仓位", summary ? fmtPct(summary.final_exposure) : ""],
+  renderStatus(payload);
+  await Promise.all([
+    refreshShadowPortfolio().catch(() => {}),
+    refreshHistory().catch(() => {}),
   ]);
-  renderDashboard(data.dashboard);
-  renderSignal(data.latest_signal);
-  await refreshShadowPortfolio().catch(() => {});
-}
-
-function setBusy(isBusy) {
-  $("dailyRunBtn").disabled = isBusy;
-  $("syncBtn").disabled = isBusy;
-  $("signalBtn").disabled = isBusy;
-  $("sellAdviceBtn").disabled = isBusy;
-  $("addShadowBtn").disabled = isBusy;
-  $("refreshShadowBtn").disabled = isBusy;
-  document.querySelectorAll("[data-shadow-action]").forEach((button) => {
-    button.disabled = isBusy;
-  });
 }
 
 function startPolling(taskId) {
   clearInterval(pollTimer);
-  pollTimer = setInterval(() => pollTask(taskId), 1200);
+  document.querySelector(".advancedSection").open = true;
   pollTask(taskId);
+  pollTimer = setInterval(() => pollTask(taskId), 1200);
 }
 
 async function pollTask(taskId) {
   const task = await api(`/api/tasks/${taskId}`);
   const logs = task.logs || [];
-  $("taskMeta").textContent = `任务 ${task.id}：${task.status}`;
+  $("taskMeta").textContent = `任务 ${task.id} · ${task.status}`;
   $("logs").textContent = logs.join("\n");
   $("logs").scrollTop = $("logs").scrollHeight;
-  pipelineFromLogs(logs, task.status);
-  if (task.status === "succeeded" || task.status === "failed") {
+  renderTaskWorkflow(logs, task.status);
+  if (["succeeded", "failed"].includes(task.status)) {
     clearInterval(pollTimer);
     pollTimer = null;
     setBusy(false);
-    if (task.status === "succeeded") {
-      await refreshStatus();
-      renderDailyResult(task.result);
-    }
+    $("runStatus").textContent = task.status === "succeeded" ? "已完成" : "运行失败";
+    if (task.status === "succeeded") await refreshStatus();
+    if (task.status === "failed") throw new Error(task.error || "任务执行失败");
   }
 }
 
 async function runDailyChain() {
   const signalDate = $("signalDate").value;
+  if (!signalDate) throw new Error("请选择信号日期。");
   const payload = {
     signal_date: signalDate,
     update_data: $("runUpdateData").checked,
@@ -423,104 +544,106 @@ async function runDailyChain() {
   localStorage.setItem("factorForgeHoldings", payload.holdings_text);
   setBusy(true);
   $("logs").textContent = "";
-  renderPipeline();
-  const res = await api("/api/daily-chain", { method: "POST", body: JSON.stringify(payload) });
-  startPolling(res.task_id);
+  const result = await api("/api/daily-chain", { method: "POST", body: JSON.stringify(payload) });
+  startPolling(result.task_id);
 }
 
 async function runSync() {
   const payload = {
-    start: $("syncStart").value.trim(),
-    end: $("syncEnd").value.trim(),
+    start: $("syncStart").value.trim() || ymdCompact($("signalDate").value),
+    end: $("syncEnd").value.trim() || ymdCompact($("signalDate").value),
     merge_full_history: $("mergeFull").checked,
   };
   setBusy(true);
-  $("logs").textContent = "";
-  const res = await api("/api/sync", { method: "POST", body: JSON.stringify(payload) });
-  startPolling(res.task_id);
+  const result = await api("/api/sync", { method: "POST", body: JSON.stringify(payload) });
+  startPolling(result.task_id);
 }
 
 async function runSignal() {
-  const payload = { signal_date: $("signalDate").value };
   setBusy(true);
-  $("logs").textContent = "";
-  const res = await api("/api/signal", { method: "POST", body: JSON.stringify(payload) });
-  startPolling(res.task_id);
+  const result = await api("/api/signal", { method: "POST", body: JSON.stringify({ signal_date: $("signalDate").value }) });
+  startPolling(result.task_id);
 }
 
 async function runSellAdvice() {
   const holdings = $("holdingsText").value;
   localStorage.setItem("factorForgeHoldings", holdings);
-  const payload = { signal_date: $("signalDate").value, holdings_text: holdings };
-  const data = await api("/api/sell-advice", { method: "POST", body: JSON.stringify(payload) });
-  renderSellAdvice(data);
+  renderSellAdvice(await api("/api/sell-advice", {
+    method: "POST",
+    body: JSON.stringify({ signal_date: $("signalDate").value, holdings_text: holdings }),
+  }));
+  document.querySelector(".operationsSection").open = true;
 }
 
-function initDates() {
+async function addSelectedToShadow() {
+  const codes = selectedCandidateCodes();
+  if (!codes.length) throw new Error("请先勾选候选股。");
+  const signalDate = shortDate(latestSignal?.summary?.signal_date || $("signalDate").value);
+  const result = await api("/api/shadow-portfolio/add", {
+    method: "POST",
+    body: JSON.stringify({ signal_date: signalDate, ts_codes: codes }),
+  });
+  renderShadowPortfolio(result.portfolio);
+  document.querySelector(".operationsSection").open = true;
+}
+
+async function updateShadowPosition(positionId, action) {
+  if (!positionId) return;
+  if (action === "delete" && !window.confirm("删除这条影子持仓？")) return;
+  const result = await api(`/api/shadow-portfolio/${action}`, {
+    method: "POST",
+    body: JSON.stringify({ position_id: positionId }),
+  });
+  renderShadowPortfolio(result.portfolio);
+}
+
+function showError(error) {
+  setBusy(false);
+  $("runStatus").textContent = "操作失败";
+  $("taskMeta").textContent = "操作失败";
+  $("logs").textContent = String(error?.message || error);
+  document.querySelector(".advancedSection").open = true;
+}
+
+function syncDateInputs() {
+  const compact = ymdCompact($("signalDate").value);
+  $("syncStart").value = compact;
+  $("syncEnd").value = compact;
+}
+
+function init() {
   const today = todayShanghai();
   $("signalDate").value = today;
   $("syncStart").value = ymdCompact(today);
   $("syncEnd").value = ymdCompact(today);
+  $("accountCapital").value = localStorage.getItem("factorForgeCapital") || "110000";
   $("holdingsText").value = localStorage.getItem("factorForgeHoldings") || "";
-  renderPipeline();
+  renderWorkflow([]);
 }
 
-$("refreshBtn").addEventListener("click", refreshStatus);
-$("dailyRunBtn").addEventListener("click", () => runDailyChain().catch((err) => {
-  setBusy(false);
-  $("taskMeta").textContent = "每日主链路提交失败";
-  $("logs").textContent = String(err);
-}));
-$("syncBtn").addEventListener("click", () => runSync().catch((err) => {
-  setBusy(false);
-  $("taskMeta").textContent = "同步任务提交失败";
-  $("logs").textContent = String(err);
-}));
-$("signalBtn").addEventListener("click", () => runSignal().catch((err) => {
-  setBusy(false);
-  $("taskMeta").textContent = "信号任务提交失败";
-  $("logs").textContent = String(err);
-}));
-$("sellAdviceBtn").addEventListener("click", () => runSellAdvice().catch((err) => {
-  $("sellBanner").classList.remove("hidden");
-  $("sellBanner").classList.add("flat");
-  $("sellBanner").textContent = String(err);
-}));
-$("addShadowBtn").addEventListener("click", () => addSelectedToShadow().catch((err) => {
-  $("taskMeta").textContent = "加入影子持仓失败";
-  $("logs").textContent = String(err);
-}));
-$("refreshShadowBtn").addEventListener("click", () => refreshShadowPortfolio().catch((err) => {
-  $("taskMeta").textContent = "影子评估刷新失败";
-  $("logs").textContent = String(err);
-}));
-
-document.addEventListener("click", (event) => {
-  const helpButton = event.target.closest(".helpDot");
-  if (helpButton) {
-    const nextOpen = !helpButton.classList.contains("isOpen");
-    closeHelpTips(helpButton);
-    helpButton.classList.toggle("isOpen", nextOpen);
-    helpButton.setAttribute("aria-expanded", String(nextOpen));
-    return;
-  }
-  if (!event.target.closest(".helpWrap")) {
-    closeHelpTips();
-  }
+$("refreshBtn").addEventListener("click", () => refreshStatus().catch(showError));
+$("dailyRunBtn").addEventListener("click", () => runDailyChain().catch(showError));
+$("syncBtn").addEventListener("click", () => runSync().catch(showError));
+$("signalBtn").addEventListener("click", () => runSignal().catch(showError));
+$("sellAdviceBtn").addEventListener("click", () => runSellAdvice().catch(showError));
+$("addShadowBtn").addEventListener("click", () => addSelectedToShadow().catch(showError));
+$("refreshShadowBtn").addEventListener("click", () => refreshShadowPortfolio().catch(showError));
+$("refreshHistoryBtn").addEventListener("click", () => refreshHistory().catch(showError));
+$("signalDate").addEventListener("change", syncDateInputs);
+$("accountCapital").addEventListener("input", () => {
+  localStorage.setItem("factorForgeCapital", $("accountCapital").value);
+  renderCandidates(latestSignal);
 });
-
-document.addEventListener("keydown", (event) => {
-  if (event.key === "Escape") closeHelpTips();
-});
-
 $("shadowRows").addEventListener("click", (event) => {
   const button = event.target.closest("[data-shadow-action]");
-  if (!button || button.disabled) return;
-  handleShadowAction(event, button.dataset.shadowAction, button.dataset.positionId);
+  if (!button) return;
+  updateShadowPosition(button.dataset.positionId, button.dataset.shadowAction).catch(showError);
+});
+$("historyRows").addEventListener("click", (event) => {
+  const button = event.target.closest("[data-history-date]");
+  if (!button) return;
+  loadHistory(button.dataset.historyDate).catch(showError);
 });
 
-initDates();
-refreshStatus().catch((err) => {
-  $("taskMeta").textContent = "状态读取失败";
-  $("logs").textContent = String(err);
-});
+init();
+refreshStatus().catch(showError);

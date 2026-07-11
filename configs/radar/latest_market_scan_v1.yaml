@@ -1,0 +1,28 @@
+version: 1
+name: latest_market_scan_v1
+project_config: configs/project.yaml
+event_templates:
+  - configs/radar/price_drop_without_volume_confirmation_v1.yaml
+  - configs/radar/volume_surge_without_price_impact_v1.yaml
+  - configs/radar/high_turnover_low_displacement_v1.yaml
+  - configs/radar/low_liquidity_large_displacement_v1.yaml
+  - configs/radar/long_lower_wick_strong_close_v1.yaml
+  - configs/radar/stock_industry_divergence_v1.yaml
+  - configs/radar/volatility_compression_breakout_v1.yaml
+  - configs/radar/trend_exhaustion_v1.yaml
+drift_templates:
+  - configs/drift/feature_return_relation_drift_v1.yaml
+  - configs/drift/variable_relation_drift_v1.yaml
+event_output_root: artifacts/radar_observations
+drift_output_root: artifacts/radar_drifts
+output_root: artifacts/market_anomaly_scans
+dedup_jaccard_threshold: 0.70
+max_highlights: 5
+freshness:
+  auto_sync: true
+  require_current: true
+  data_ready_after: "18:00"
+  min_last_day_rows: 1000
+  min_last_day_tradeable: 500
+  min_last_day_liquid: 500
+  max_required_missing_rate: 0.05

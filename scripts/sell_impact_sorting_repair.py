@@ -228,7 +228,11 @@ def build_dataset(panel: pd.DataFrame, log, include_unlabeled_date: pd.Timestamp
         d[f"{col}_z"] = cs_zscore(d, col)
 
     market = build_market_context(d)
-    d = d.merge(market, on="trade_date", how="left")
+    # Mapping the small daily context back avoids pandas materializing a second
+    # full-width copy of the multi-million-row panel during merge.
+    market = market.set_index("trade_date")
+    for col in REGIME_COLS:
+        d[col] = d["trade_date"].map(market[col])
     d = add_clusters(d)
     d = add_regime_interactions(d)
     d["eligible"] = (

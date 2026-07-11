@@ -37,7 +37,9 @@ class TushareIngestor:
                 )
         return report
 
-    def ingest(self, start_date: str, end_date: str) -> str:
+    def ingest(
+        self, start_date: str, end_date: str, *, version_kind: str = "complete"
+    ) -> str:
         ingestion_id = f"ingest_{uuid4().hex[:12]}"
         started = datetime.now(timezone.utc).isoformat()
         with self.metadata.connect() as connection:
@@ -49,7 +51,7 @@ class TushareIngestor:
             datasets = self._fetch(start_date, end_date)
             with pd.option_context("mode.copy_on_write", True):
                 panel = DailyPanelBuilder(self.project).build(datasets)
-                version = self.repository.publish(panel, datasets)
+                version = self.repository.publish(panel, datasets, version_kind=version_kind)
             self._persist_dimensions(datasets, version)
             self._cleanup_staging(start_date, end_date)
             with self.metadata.connect() as connection:
@@ -120,7 +122,11 @@ class TushareIngestor:
                 if frame.empty:
                     continue
                 frames.append(frame.reindex(columns=required_columns[name]))
-            result[name] = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+            result[name] = (
+                pd.concat(frames, ignore_index=True)
+                if frames
+                else pd.DataFrame(columns=required_columns[name])
+            )
         result["stock_basic"] = stocks
         result["trade_calendar"] = calendar
         result["st_status_coverage"] = pd.DataFrame({"trade_date": st_checked_dates})

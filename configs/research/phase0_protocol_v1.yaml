@@ -1,0 +1,66 @@
+version: 1
+name: alpha_research_radar_phase0_v1
+scope:
+  market: CN_A
+  frequency: daily
+  universe: top1000_liquid
+  inputs: [ohlcv, industry, market_cap, liquidity, tradability]
+data_roles:
+  discovery:
+    generator_access: true
+    may_modify_hypothesis: true
+  validation:
+    generator_access: true
+    access_counts_as_peek: true
+  sealed_test:
+    generator_access: false
+    requires_distinct_approver: true
+    one_time_gate: true
+  forward:
+    generator_access: false
+    starts_at_discovered_at: true
+budgets:
+  idea:
+    max_trials: 5
+    max_revisions: 2
+    max_validation_peeks: 2
+  family:
+    max_trials: 25
+    max_revisions: 10
+    max_validation_peeks: 8
+event_templates:
+  - price_drop_without_volume_confirmation
+  - volume_surge_without_price_impact
+  - price_rise_with_volume_contraction
+  - extreme_lower_wick_close_location
+  - stock_industry_strength_divergence
+  - volatility_expansion_close_location
+  - continuous_move_speed_decay
+  - liquidity_input_price_output_mismatch
+relation_monitors:
+  - feature_to_forward_residual_return
+  - price_volume_conditional_residual
+  - stock_industry_residual_strength
+  - volatility_reversal_conditional_return
+primary_horizons: [3, 5, 10]
+decision_actions:
+  - reject
+  - observe_forward
+  - revise_one_hypothesis
+  - promote_candidate
+  - retire
+evaluation_baselines:
+  - id: random_template
+    description: 在相同模板、数据和 trial 预算下随机选择研究对象
+  - id: radar_skill
+    description: 由异常雷达排序，后续允许受约束 Skill 编排
+  - id: human_research
+    description: 由研究者人工提出并设计实验
+success_metrics:
+  - validation_passes_per_100_trials
+  - forward_decay
+  - incremental_independence
+  - duplicate_rate
+  - human_hours_per_candidate
+  - cost_per_qualified_candidate
+  - leakage_or_budget_violations

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Factor Forge Alpha Research"
+  short_description: "Turn ideas and market anomalies into tested factors"
+  default_prompt: "Use $factor-forge-alpha-research to turn this market idea into a tracked Feature, Factor, and backtest workflow."

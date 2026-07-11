@@ -10,48 +10,26 @@ from . import supply_features as sf
 from .atr_reversion_config import ATRReversionFeatureConfig, ATRReversionLabelConfig
 
 
-CORE_FEATURES = [
-    "down_deviation_atr",
-    "down_deviation_pct",
-    "lower_shadow_atr",
-    "lower_shadow_pct",
-    "upper_shadow_atr",
-    "upper_shadow_pct",
-    "intraday_repair",
-    "core_signal",
+SHAPE_FEATURES = [
+    "touch_depth_atr", "reclaim_atr", "lower_wick_share", "lower_wick_atr",
+    "upper_wick_share", "upper_wick_atr", "close_location", "body_share",
 ]
-STATE_FEATURES = [
-    "trend_state",
-    "vol_state",
-    "vol_state_pct",
-    "amount_shock",
-    "liquidity_log_amount_20",
-    "limit_flag",
-    "near_down_limit_flag",
-]
-CONTEXT_FEATURES = [
-    "market_ret_1d",
-    "market_ret_5d",
-    "industry_ret_1d",
-    "industry_ret_5d",
-    "stock_minus_industry_5d",
-]
+PRICE_FEATURES = ["price_velocity_3_atr"]
+VOLATILITY_FEATURES = ["atr_pct_120", "atr_velocity_5"]
+FLOW_FEATURES = ["flow_intensity", "flow_change_3_5", "amount_ratio_20"]
+ACCELERATION_FEATURES = ["atr_acceleration_5_5", "price_acceleration_3_3_atr"]
+
+# Kept as a public alias for existing callers of the original research module.
+CORE_FEATURES = SHAPE_FEATURES
 FEATURE_GROUPS = {
-    "core": CORE_FEATURES,
-    "state": STATE_FEATURES,
-    "context": CONTEXT_FEATURES,
-    "all": CORE_FEATURES + STATE_FEATURES + CONTEXT_FEATURES,
+    "S": SHAPE_FEATURES,
+    "P": PRICE_FEATURES,
+    "V": VOLATILITY_FEATURES,
+    "F": FLOW_FEATURES,
+    "A": ACCELERATION_FEATURES,
+    "all": SHAPE_FEATURES + PRICE_FEATURES + VOLATILITY_FEATURES + FLOW_FEATURES + ACCELERATION_FEATURES,
 }
-NO_CROSS_SECTION_ZSCORE = frozenset({
-    "down_deviation_pct",
-    "lower_shadow_pct",
-    "upper_shadow_pct",
-    "vol_state_pct",
-    "limit_flag",
-    "near_down_limit_flag",
-    "market_ret_1d",
-    "market_ret_5d",
-})
+NO_CROSS_SECTION_ZSCORE = frozenset({"lower_wick_share", "upper_wick_share", "close_location", "body_share", "atr_pct_120"})
 
 REQUIRED_PANEL_COLUMNS = {
     "trade_date", "ts_code",
@@ -86,63 +64,69 @@ def build_atr_reversion_dataset(
         & industries.notna()
     )
 
-    atr20 = af.atr(data["adj_high"], data["adj_low"], data["adj_close"], stocks, features.atr_window)
-    ma20 = af.rolling_mean(data["adj_close"], stocks, features.ma_window)
-    ma60 = af.rolling_mean(data["adj_close"], stocks, features.long_ma_window)
-    down = af.downside_deviation(data["adj_close"], ma20, atr20)
-    wick = af.lower_shadow(data["raw_open"], data["raw_close"], data["raw_low"], atr20)
-    upper_wick = af.upper_shadow(data["raw_open"], data["raw_close"], data["raw_high"], atr20)
-    repair = af.intraday_repair(data["raw_close"], data["raw_low"], data["raw_high"])
-    down_pct = af.rolling_percentile(down, stocks, features.percentile_window)
-    wick_pct = af.rolling_percentile(wick, stocks, features.percentile_window)
-    upper_wick_pct = af.rolling_percentile(upper_wick, stocks, features.percentile_window)
-    vol_state = atr20 / data["adj_close"].where(data["adj_close"] > 0)
-    vol_pct = af.rolling_percentile(vol_state, stocks, features.percentile_window)
-    log_amt_20 = sf.log_avg_amount(data["amount_cny"], stocks, features.amount_window)
-    amt_shock = af.amount_shock(data["amount_cny"], stocks, features.amount_shock_window)
+    # All intra-day geometric measures use adjusted OHLC.  This avoids mixing a
+    # corporate-action-adjusted Bollinger band with raw candle prices.
+    close, open_, high, low = (data[c] for c in ("adj_close", "adj_open", "adj_high", "adj_low"))
+    atr20 = af.atr(high, low, close, stocks, features.atr_window)
+    atr_lag = af.lag(atr20, stocks)
+    close_lag = af.lag(close, stocks)
+    mid = sf._rolling(close, stocks, features.ma_window, method="mean", min_periods=max(5, features.ma_window // 2), shift=1)
+    std = af.rolling_std(close, stocks, features.ma_window, shift=1)
+    lower_band = mid - features.bollinger_std * std
+    denom_atr = atr_lag.where(atr_lag > af.EPS)
+    intraday_range = high - low
+    body_bottom = pd.Series(np.minimum(open_.to_numpy(), close.to_numpy()), index=data.index)
+    body_top = pd.Series(np.maximum(open_.to_numpy(), close.to_numpy()), index=data.index)
+    lower_wick = (body_bottom - low).clip(lower=0.0)
+    upper_wick = (high - body_top).clip(lower=0.0)
+    range_denom = intraday_range.where(intraday_range > af.EPS)
 
-    ret1 = data["adj_close"].groupby(stocks, sort=False).pct_change(1, fill_method=None)
-    ret5 = data["adj_close"].groupby(stocks, sort=False).pct_change(features.market_window, fill_method=None)
-    market_ret_1d = ret1.where(valid_mask).groupby(dates, sort=False).transform("mean")
-    market_ret_5d = ret5.where(valid_mask).groupby(dates, sort=False).transform("mean")
-    industry_ret_1d = sf._industry_loo_mean(ret1, dates, industries)
-    industry_ret_5d = sf._industry_loo_mean(ret5, dates, industries)
-
-    lower_limit_price = data.get("limit_down_price")
-    upper_limit_price = data.get("limit_up_price")
-    if lower_limit_price is None:
-        lower_limit_price = data["pre_close"] * 0.9
-    if upper_limit_price is None:
-        upper_limit_price = data["pre_close"] * 1.1
-    limit_flag = (
-        data.get("is_limit_up_open", pd.Series(False, index=data.index)).astype(bool)
-        | data.get("is_limit_down_open", pd.Series(False, index=data.index)).astype(bool)
-        | (data["raw_high"] >= upper_limit_price * 0.999)
-        | (data["raw_low"] <= lower_limit_price * 1.001)
+    touch = ((lower_band - low) / denom_atr).clip(-features.shape_clip, features.shape_clip)
+    reclaim = ((close - lower_band) / denom_atr).clip(-features.shape_clip, features.shape_clip)
+    natr = atr20 / close.where(close > 0)
+    smooth_natr = af.ema(natr, stocks, features.natr_ema_span)
+    log_smooth_natr = np.log(smooth_natr.where(smooth_natr > af.EPS))
+    velocity_window = features.velocity_window
+    acceleration_window = features.acceleration_window
+    atr_velocity = af.rolling_slope(log_smooth_natr, stocks, velocity_window)
+    atr_accel = atr_velocity - af.lag(atr_velocity, stocks, acceleration_window)
+    log_close = np.log(close.where(close > 0))
+    price_slope_3 = af.rolling_slope(log_close, stocks, 3)
+    price_accel = price_slope_3 - af.lag(price_slope_3, stocks, 3)
+    price_velocity = ((log_close - af.lag(log_close, stocks, 3)) / 3.0) / (atr_lag / close_lag).where(close_lag > 0)
+    price_accel = price_accel / (atr_lag / close_lag).where(close_lag > 0)
+    amount_base = sf._rolling(data["amount_cny"], stocks, features.amount_window, method="mean", min_periods=max(5, features.amount_window // 2), shift=1)
+    amount_ratio = data["amount_cny"] / amount_base.where(amount_base > 0)
+    flow_col = features.net_flow_column or next(
+        (name for name in ("net_flow_cny", "net_mf_amount", "main_net_inflow", "main_net_amount", "net_amount") if name in data),
+        None,
     )
-    near_down_limit = data["raw_close"] <= lower_limit_price * 1.02
+    if flow_col is None:
+        flow_intensity = pd.Series(np.nan, index=data.index)
+        flow_change = pd.Series(np.nan, index=data.index)
+    else:
+        flow_intensity = data[flow_col] / data["amount_cny"].where(data["amount_cny"] > 0)
+        recent = sf._rolling(flow_intensity, stocks, 3, method="mean", min_periods=3)
+        previous = sf._rolling(flow_intensity, stocks, 5, method="mean", min_periods=5, shift=3)
+        flow_change = recent - previous
 
     cols = {
-        "down_deviation_atr": down,
-        "down_deviation_pct": down_pct,
-        "lower_shadow_atr": wick,
-        "lower_shadow_pct": wick_pct,
-        "upper_shadow_atr": upper_wick,
-        "upper_shadow_pct": upper_wick_pct,
-        "intraday_repair": repair,
-        "core_signal": af.core_signal(down, wick, repair),
-        "trend_state": af.trend_state(data["adj_close"], ma20, ma60),
-        "vol_state": vol_state,
-        "vol_state_pct": vol_pct,
-        "amount_shock": amt_shock,
-        "liquidity_log_amount_20": log_amt_20,
-        "limit_flag": limit_flag.astype(float),
-        "near_down_limit_flag": near_down_limit.astype(float),
-        "market_ret_1d": market_ret_1d,
-        "market_ret_5d": market_ret_5d,
-        "industry_ret_1d": industry_ret_1d,
-        "industry_ret_5d": industry_ret_5d,
-        "stock_minus_industry_5d": ret5 - industry_ret_5d,
+        "touch_depth_atr": touch,
+        "reclaim_atr": reclaim,
+        "lower_wick_share": lower_wick / range_denom,
+        "lower_wick_atr": lower_wick / denom_atr,
+        "upper_wick_share": upper_wick / range_denom,
+        "upper_wick_atr": upper_wick / denom_atr,
+        "close_location": (close - low) / range_denom,
+        "body_share": (close - open_) / range_denom,
+        "price_velocity_3_atr": price_velocity.clip(-features.shape_clip, features.shape_clip),
+        "atr_pct_120": af.rolling_percentile(natr, stocks, features.percentile_window),
+        "atr_velocity_5": atr_velocity,
+        "flow_intensity": flow_intensity,
+        "flow_change_3_5": flow_change,
+        "amount_ratio_20": np.log(amount_ratio.where(amount_ratio > 0)),
+        "atr_acceleration_5_5": atr_accel,
+        "price_acceleration_3_3_atr": price_accel.clip(-features.shape_clip, features.shape_clip),
     }
     feature_names = FEATURE_GROUPS["all"]
     out = pd.DataFrame({"datetime": dates.to_numpy(), "instrument": stocks.to_numpy()})
@@ -170,18 +154,14 @@ def build_atr_reversion_dataset(
         std = grouped.transform("std", ddof=0)
         out[scale_targets] = (out[scale_targets] - mean) / std.replace(0, np.nan)
 
+    out["event_pool"] = touch.ge(features.event_pool_threshold).to_numpy()
+    out["net_flow_available"] = bool(flow_col)
     exclude = ~valid_mask.to_numpy()
     label_cols = [c for c in out.columns if c == "label" or c.startswith("label_")]
     out.loc[exclude, feature_names + label_cols] = np.nan
-    out.loc[out["limit_flag"].eq(1.0), feature_names + label_cols] = np.nan
-
     if features.use_sample_weight:
-        weight = pd.Series(1.0, index=data.index)
-        weight = weight.mask(near_down_limit, 0.35)
-        weight = weight.mask(vol_pct >= features.extreme_vol_quantile, 0.5)
-        weight = weight.mask(log_amt_20 < log_amt_20.groupby(dates, sort=False).transform(lambda s: s.quantile(0.1)), 0.5)
-        out["sample_weight"] = weight.to_numpy()
-        out.loc[exclude | limit_flag.to_numpy(), "sample_weight"] = np.nan
+        out["sample_weight"] = 1.0
+        out.loc[exclude, "sample_weight"] = np.nan
     else:
         out["sample_weight"] = np.nan
     return out, feature_names

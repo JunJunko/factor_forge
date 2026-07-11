@@ -1,0 +1,13 @@
+version: 1
+id: feature_return_relation_drift_v1
+kind: feature_return_relation_drift
+entity: market_relation
+relations:
+  - {id: lower_shadow_to_5d, predictor: lower_shadow_ratio, target_horizon: 5, metric: daily_rank_ic}
+  - {id: volume_efficiency_to_5d, predictor: volume_price_efficiency, target_horizon: 5, metric: daily_rank_ic}
+  - {id: industry_relative_to_10d, predictor: industry_relative_return_5d, target_horizon: 10, metric: daily_rank_ic}
+windows: {recent: 60, medium: 252, baseline: 756}
+detector: {method: robust_delta_zscore, threshold: 2.5, min_persistence_days: 20}
+residualize_by: [market_direction, market_volatility, market_breadth, liquidity_regime]
+quality_gate: {min_cross_section_size: 500, min_valid_days_recent: 40}
+universe_field: is_liquid
