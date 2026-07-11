@@ -114,6 +114,8 @@ class MarketDataFreshnessService:
         failures: list[str] = []
         if pd.Timestamp(end_date) < pd.Timestamp(expected_trade_date):
             failures.append(f"data_end<{expected_trade_date}")
+        elif pd.Timestamp(end_date) > pd.Timestamp(expected_trade_date):
+            failures.append(f"data_end>{expected_trade_date}_before_ready_cutoff")
         panel_path = (
             self.project.paths.data_root / "versions" / resolved
             / "curated" / "stock_daily_panel.parquet"

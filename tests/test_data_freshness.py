@@ -79,6 +79,18 @@ def test_freshness_audit_blocks_stale_or_incomplete_tail(tmp_path):
     assert stale.failures == (f"data_end<{(end + pd.offsets.BDay(1)):%Y-%m-%d}",)
 
 
+def test_freshness_gate_rejects_today_before_configured_ready_time(tmp_path):
+    project = _project(tmp_path)
+    panel = make_panel(days=30, stocks=20)
+    repository = DataVersionRepository(project.paths.data_root, project.paths.metadata_db)
+    repository.publish(panel, source="test", version_kind="complete")
+    service = MarketDataFreshnessService(project, CalendarProvider([]), policy=_policy())
+    end = pd.Timestamp(panel["trade_date"].max())
+    result = service.audit((end - pd.offsets.BDay(1)).strftime("%Y-%m-%d"))
+    assert result.status == "STALE_OR_INCOMPLETE"
+    assert "before_ready_cutoff" in result.failures[0]
+
+
 def test_auto_sync_publishes_increment_then_new_complete_version(tmp_path, monkeypatch):
     project = _project(tmp_path)
     full = make_panel(days=31, stocks=20)
