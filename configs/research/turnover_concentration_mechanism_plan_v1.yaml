@@ -1,0 +1,144 @@
+version: 1
+kind: anomaly_mechanism_experiment_plan
+plan_id: plan_turnover_concentration_mechanisms_v1
+idea_id: idea_turnover_concentration_mechanisms_v1
+family_id: turnover_concentration_mechanisms
+name: turnover_concentration_mechanism_plan_v1
+status: frozen_before_execution
+
+source_observation:
+  observation_id: obs_turnover_concentration_v1_171a2e2c3cd87b81
+  template_id: turnover_concentration_v1
+  definition_hash: 7e0b2b5675de84184355085f36288d45e17d7316ce01e4aea1eaec09f1bd0399
+  card_sha256: 30ef9c0be2a933509206c85048bfe70276c651622d5443bb36a15d362bda5009
+  data_version: data_v1_20260710T115133Z_208e9fc8
+  as_of_date: "2026-07-10"
+
+hypotheses:
+  - id: hyp_information_driven_concentration_v1
+    role: primary_mechanism
+  - id: hyp_passive_flow_migration_v1
+    role: competing_mechanism
+    alternative_to: hyp_information_driven_concentration_v1
+  - id: hyp_one_off_mechanical_volume_v1
+    role: competing_mechanism
+    alternative_to: hyp_information_driven_concentration_v1
+
+measurements:
+  - id: top5_amount_share
+    bucket: descriptor
+    semantics: Sum of current-day amount for the top five percent amount-ranked stocks divided by total eligible-market amount.
+    implementation: factor_forge.radar.scanner.RelationAnomalyScanner._composite_anomaly
+    point_in_time: true
+    lookback_days: 0
+    missing_policy: Exclude rows with missing or nonpositive amount before forming shares.
+    distinguishes: Measures the frozen anomaly intensity shared by all three mechanisms.
+  - id: concentration_history_percentile
+    bucket: descriptor
+    semantics: Current top5_amount_share percentile against the strictly prior 252 trading days.
+    implementation: factor_forge.radar.percentiles.pit_rolling_percentile
+    point_in_time: true
+    lookback_days: 252
+    missing_policy: Require at least 120 valid prior observations.
+    distinguishes: Separates historically extreme concentration from a merely high raw level.
+  - id: industry_amount_hhi
+    bucket: discriminator
+    semantics: Sum of squared PIT SW L1 industry shares of eligible-market amount on the observation date.
+    implementation: factor_forge.event_study.mechanism_features.build_turnover_concentration_aggregate_features
+    point_in_time: true
+    lookback_days: 0
+    missing_policy: Exclude unknown PIT industry membership and report excluded amount share.
+    distinguishes: Higher values support common industry or theme information over broad passive migration.
+  - id: top_size_decile_amount_share
+    bucket: discriminator_context
+    semantics: Share of eligible-market amount contributed by the current-date top decile of log total market value.
+    implementation: factor_forge.event_study.mechanism_features.build_turnover_concentration_aggregate_features
+    point_in_time: true
+    lookback_days: 0
+    missing_policy: Exclude missing log_total_mv and report excluded amount share.
+    distinguishes: Higher values support index, ETF, or large-cap passive-flow migration.
+  - id: contributor_return_sign_coherence
+    bucket: discriminator
+    semantics: Absolute signed amount-weighted one-day return divided by absolute amount-weighted one-day return among frozen contributor stocks.
+    implementation: factor_forge.event_study.mechanism_features.build_turnover_concentration_aggregate_features
+    point_in_time: true
+    lookback_days: 1
+    missing_policy: Return null when the absolute weighted-return denominator is zero.
+    distinguishes: High directional coherence supports shared information; low coherence supports mechanical two-way volume.
+  - id: contributor_volume_price_efficiency
+    bucket: discriminator_context
+    semantics: Median contributor-stock residual from the same-day cross-sectional regression of absolute one-day return on log amount.
+    implementation: factor_forge.radar.drift.RelationDriftRunner._features
+    point_in_time: true
+    lookback_days: 1
+    missing_policy: Require at least 100 valid eligible stocks in the daily cross-section.
+    distinguishes: Positive residual supports price-relevant information; weak residual supports passive or mechanical volume.
+  - id: concentration_persistence_5d
+    bucket: discriminator
+    semantics: Count over the current and prior four trading days for which concentration_history_percentile is at least 0.95.
+    implementation: factor_forge.event_study.mechanism_features.build_turnover_concentration_aggregate_features
+    point_in_time: true
+    lookback_days: 256
+    missing_policy: Require five valid current/prior concentration states after percentile warm-up.
+    distinguishes: Persistent concentration supports information or sustained allocation; a count of one supports one-off mechanical volume.
+  - id: return_contribution_concentration
+    bucket: discriminator
+    semantics: Share of total eligible-market absolute amount-weighted one-day return contributed by the frozen top-amount contributor set.
+    implementation: factor_forge.event_study.mechanism_features.build_turnover_concentration_aggregate_features
+    point_in_time: true
+    lookback_days: 1
+    missing_policy: Return null when total absolute amount-weighted return is zero.
+    distinguishes: High contribution confirms price relevance; low contribution indicates turnover without commensurate market impact.
+
+expression_gate:
+  factor_dsl_status: deferred
+  route: deterministic_radar_event_study_extension
+  reason: Market-level concentration, contributor-set aggregation, and cross-day persistence are not current Factor DSL expressions and must not be represented with invented pseudo-functions.
+  execution_requirement: Satisfied by the deterministic aggregate builder and PIT-prefix tests; Event Study execution still requires a separately validated config and explicit authorization.
+
+primary_metric:
+  id: full_controls_5d_daily_mean_paired_excess
+  stage: full_controls
+  horizon: 5
+  estimator: daily_equal_weight_mean_paired_excess
+  label_semantics: adj_open_T_plus_6_div_adj_open_T_plus_1_minus_1
+  direction_policy: two_sided_and_frozen_from_observed_gate_result
+  inference: Newey-West_HAC_max_lags_4_then_Benjamini-Hochberg_FDR
+  matching:
+    exact: [trade_date, industry_l1_code]
+    controls: [prior_return_5d, volatility_20d, log_avg_amount_20d, log_total_mv]
+    neighbors: 3
+    caliper: 3.0
+    min_match_rate: 0.70
+  gate:
+    min_mature_events: 200
+    max_abs_smd: 0.20
+    min_abs_nw_t: 2.0
+    max_fdr_q: 0.10
+    min_daily_direction_ratio: 0.52
+  non_rescue_rule: Mechanism diagnostics and severity tables cannot rescue a failed primary metric or failed matching balance.
+
+mechanism_predictions:
+  information_driven: High industry_amount_hhi, return-sign coherence, price efficiency, persistence, and return-contribution concentration after size control.
+  passive_flow_migration: High top-size-decile amount share with weaker industry clustering and contributor price efficiency.
+  one_off_mechanical_volume: Low persistence, weak sign coherence, and low return-contribution concentration despite extreme amount concentration.
+
+trials:
+  - id: trial_turnover_concentration_phase3_v1
+    order: 1
+    data_role: validation
+    design: frozen_observation_matched_event_study
+    event_study_config: configs/event_studies/turnover_concentration_phase3_v1.yaml
+    primary_metric: full_controls_5d_daily_mean_paired_excess
+    execution_authorized: true
+    failure_action: deterministic_gate_only
+
+budgets:
+  idea: {max_trials: 5, max_revisions: 2, max_validation_peeks: 2}
+  planned_consumption: {trials: 1, revisions: 0, validation_peeks: 1}
+
+execution_policy:
+  current_action: create_and_validate_phase3_event_study_config
+  experiment_execution_authorized: true
+  event_study_config_creation_authorized: true
+  do_not_read_raw_market_tables_with_llm: true

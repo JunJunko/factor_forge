@@ -1,0 +1,15 @@
+version: 1
+kind: factor_combination
+factor_combination:
+  id: smart_money_m1_flow_only_v1
+  name: 主板聪明钱M1纯资金
+  description: 异常主动流入与5日持续性的固定等权组合。
+  components:
+    - {id: flow_abnormal, source: {type: yaml, path: ../factors/smart_flow_abnormal_120d_v1.yaml}, direction: positive, weight: 0.50}
+    - {id: flow_persistence, source: {type: yaml, path: ../factors/smart_flow_persistence_5d_v1.yaml}, direction: positive, weight: 0.50}
+  preprocessing:
+    winsorize: {enabled: true, method: percentile, lower: 0.01, upper: 0.99}
+    normalization: {method: cs_zscore, scope: trade_date, min_samples: 100}
+    missing_value: {method: intersection, minimum_valid_components: 2}
+  combination: {method: equal_weight, normalize_weights: true}
+  output: {direction: positive, column: factor_value}

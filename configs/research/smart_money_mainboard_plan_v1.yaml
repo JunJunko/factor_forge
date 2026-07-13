@@ -1,0 +1,79 @@
+version: 1
+kind: alpha_research_plan
+plan_id: plan_smart_money_mainboard_v1
+idea_id: idea_smart_money_mainboard_v1
+family_id: smart_money_active_flow_price_acceptance
+name: smart_money_mainboard_plan_v1
+status: frozen_before_discovery_execution
+
+source_fingerprint:
+  universe: SSE_SZSE_main_board_only
+  distinctive_terms: [tushare_moneyflow, abnormal_active_flow, five_day_persistence, price_acceptance, crowding]
+
+universe_policy:
+  exchanges: [SSE, SZSE]
+  boards: [main]
+  excluded_boards: [chinext, star]
+  listing_trade_days_min: 120
+  evaluation_universe: liquid
+  signal_time: T_CLOSE
+  execution_time: T_PLUS_1_OPEN
+
+hypotheses:
+  - {id: hyp_informed_active_flow_v1, role: primary}
+  - {id: hyp_price_momentum_explains_flow_v1, role: competing_mechanism, alternative_to: hyp_informed_active_flow_v1}
+  - {id: hyp_crowded_chasing_reversal_v1, role: competing_direction, alternative_to: hyp_informed_active_flow_v1}
+
+measurements:
+  - {id: active_flow_ratio, bucket: descriptor, formula: net_mf_amount_cny_div_amount_cny, pit_available: T_CLOSE, lookback_days: 0}
+  - {id: flow_abnormal_120d, bucket: descriptor, formula: rolling_population_z_clipped_5, pit_available: true, lookback_days: 120}
+  - {id: flow_persistence_5d, bucket: descriptor, formula: mean_clipped_flow_z_div_3, pit_available: true, lookback_days: 124}
+  - {id: industry_relative_return_1d, bucket: discriminator, formula: stock_return_minus_pit_sw_l1_mean, pit_available: T_CLOSE, lookback_days: 1}
+  - {id: close_location, bucket: discriminator, formula: close_minus_low_div_high_minus_low, pit_available: T_CLOSE, lookback_days: 0}
+  - {id: turnover_abnormal_120d, bucket: context_control, formula: rolling_population_z_clipped_5, pit_available: T_CLOSE, lookback_days: 120}
+  - {id: prior_industry_relative_return_20d, bucket: context_control, formula: stock_20d_return_minus_pit_sw_l1_mean, pit_available: true, lookback_days: 20}
+  - {id: volatility_20d, bucket: context_control, formula: rolling_population_std_daily_return, pit_available: true, lookback_days: 20}
+
+expression_gate:
+  route: factor_dsl_and_fixed_factor_combinations
+  status: passed
+  no_new_operator_required: true
+  historical_percentile_deferred: true
+  reason: Rolling Z is an audited monotonic abnormality approximation; percentile is not required for the primary trial.
+
+sample_policy:
+  discovery: {start: "2016-01-04", end: "2021-12-31"}
+  validation: {start: "2022-01-01", end: "2025-12-31"}
+  forward_observation_starts_after: "2026-07-12"
+  sealed_test_access: forbidden_without_separate_approval
+
+primary_metric:
+  id: m2_increment_over_m0_liquid_industry_relative_5d_rank_ic
+  target: stock_minus_sw_l1_return
+  variant: industry_size_neutralized
+  universe: liquid
+  horizon: 5
+  required_direction: positive
+  candidate_gate: {m2_min_mean: 0.01, m2_min_positive_ratio: 0.50, m2_max_fdr_q: 0.10, paired_m2_minus_m0_mean_gt: 0.0}
+
+trials:
+  - {order: 1, id: trial_smart_money_m0_discovery_v1, data_role: discovery, experiment_config: configs/experiments/smart_money_m0_price_baseline_discovery_v1.yaml, role: diagnostic_baseline}
+  - {order: 2, id: trial_smart_money_m1_discovery_v1, data_role: discovery, experiment_config: configs/experiments/smart_money_m1_flow_only_discovery_v1.yaml, role: diagnostic_descriptor}
+  - {order: 3, id: trial_smart_money_m2_discovery_v1, data_role: discovery, experiment_config: configs/experiments/smart_money_m2_price_plus_flow_discovery_v1.yaml, role: primary_gate}
+  - {order: 4, id: trial_smart_money_m3_discovery_v1, data_role: discovery, requires: trial_smart_money_m2_discovery_v1_passes, experiment_config: configs/experiments/smart_money_m3_acceptance_crowding_discovery_v1.yaml, cannot_rescue_failed_m2: true}
+
+decision_gate:
+  reject: M2 fails its exact Gate or paired M2-minus-M0 RankIC increment is not positive.
+  revise_one_hypothesis: One implementation-valid data or mechanism issue is identified within the single revision budget.
+  observe_forward: M2 passes, paired M2-minus-M0 increment is positive, M3 is non-contradictory, and validation later passes unchanged.
+  promote_candidate: forbidden_before_forward_evidence
+
+budgets:
+  idea: {max_trials: 4, max_revisions: 1, max_validation_peeks: 2}
+  planned_consumption: {trials: 4, revisions: 0, validation_peeks: 0}
+
+execution_policy:
+  experiment_execution_authorized: true
+  frozen_data_version: data_v1_20260712T131746Z_c365f6bc
+  data_audit: {mainboard_rows: 4056532, moneyflow_rows: 3923608, coverage: 0.9989675628882778, amount_bound_violation_ratio: 0.00001580203616882182}
+  current_action: execute_trials_in_registered_order

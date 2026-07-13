@@ -1,0 +1,44 @@
+version: 1
+name: turnover_concentration_phase3_v1
+project_config: configs/project.yaml
+observation_dir: artifacts/radar_observations/obs_turnover_concentration_v1_171a2e2c3cd87b81
+label_data_version: data_v1_20260710T115133Z_208e9fc8
+horizons: [3, 5, 10]
+universe_field: is_liquid
+matching:
+  exact: [trade_date, industry_l1_code]
+  neighbors: 3
+  caliper: 3.0
+  allow_control_reuse: true
+  min_match_rate: 0.70
+  stages:
+    - id: same_date_industry
+      controls: []
+    - id: prior_return_control
+      controls: [prior_return_5d]
+    - id: return_volatility_controls
+      controls: [prior_return_5d, volatility_20d]
+    - id: full_controls
+      controls: [prior_return_5d, volatility_20d, log_avg_amount_20d, log_total_mv]
+inference:
+  primary_horizon: 5
+  primary_stage: full_controls
+  nw_lag_rule: horizon_minus_one
+  fdr_alpha: 0.10
+  min_mature_events: 200
+  min_regime_events: 50
+  severity_groups: 3
+gate:
+  min_abs_nw_t: 2.0
+  max_fdr_q: 0.10
+  min_daily_direction_ratio: 0.52
+  max_abs_smd: 0.20
+mechanism_feature_set: turnover_concentration_v1
+lineage:
+  idea_id: idea_turnover_concentration_mechanisms_v1
+  hypothesis_id: hyp_information_driven_concentration_v1
+  plan_id: plan_turnover_concentration_mechanisms_v1
+  trial_id: trial_turnover_concentration_phase3_v1
+  primary_metric: full_controls_5d_daily_mean_paired_excess
+output_root: artifacts/radar_event_studies
+research_db: data/research.sqlite3

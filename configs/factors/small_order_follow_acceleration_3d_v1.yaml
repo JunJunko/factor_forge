@@ -1,0 +1,32 @@
+version: 1
+kind: factor
+factor:
+  name: small_order_follow_acceleration_3d_v1
+  label: 小单资金三日跟随加速度
+  description: 当日小单异常度相对严格滞后的前三日均值的增量。
+  hypothesis: 小单快速跟随可能代表信息扩散延续，也可能代表末端拥挤。
+  direction: positive
+  expected_shape: unknown
+data:
+  frequency: daily
+  required_fields: [buy_sm_amount_cny, sell_sm_amount_cny, amount]
+  lookback_days: 122
+scope: {universe: factor_eligible, cross_section: market, point_in_time_required: true, min_group_size: 10}
+calculation:
+  parameters:
+    history_window: {value: 120, robustness_neighbors: []}
+    comparison_window: {value: 3, robustness_neighbors: []}
+  features:
+    small_net: buy_sm_amount_cny - sell_sm_amount_cny
+    small_ratio: small_net / (amount + 1.0)
+    small_mean: mean(small_ratio, history_window)
+    small_std: std(small_ratio, history_window)
+    small_z: clip((small_ratio - small_mean) / (small_std + 0.000001), lower=-5.0, upper=5.0)
+    prior_small_z: lag(small_z, 1)
+    prior_small_level: mean(prior_small_z, comparison_window)
+  formula: small_z - prior_small_level
+  missing_policy: skip
+  winsorize: mad
+  mad_scale: 5.0
+  standardize: zscore
+output: {value_field: factor_value}

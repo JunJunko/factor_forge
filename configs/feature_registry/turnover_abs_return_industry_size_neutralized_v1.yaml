@@ -1,0 +1,30 @@
+version: 1
+kind: feature_registry_entry
+id: turnover_abs_return_industry_size_neutralized_v1
+name: Turnover displacement industry-and-size-neutralized diagnostic
+lifecycle: research_only
+expression_route: evaluation_variant
+source_factor_config: configs/factors/turnover_abs_return_continuation_v3.yaml
+source_variant: industry_size_neutralized
+semantics: >
+  The V3 turnover-versus-industry-relative-price-displacement score after the
+  fixed evaluation neutralization against PIT SW L1 industry membership and
+  log market value. This is an evaluation variant, not an independently
+  executable DSL factor.
+point_in_time_inputs: [turnover_rate, adj_close, industry_l1_code, log_total_mv, is_factor_eligible]
+neutralization_controls: [industry_l1_code, log_total_mv]
+provenance:
+  idea_id: idea_turnover_abs_return_alpha_v1
+  plan_id: plan_turnover_abs_return_alpha_v3
+  trial_id: trial_turnover_abs_return_discovery_v3
+  decision_id: decision_86526d1c6e00
+  source_run_id: turnover_abs_return_continuation_v3__20260711T043621Z__f6dc5bbe
+  source_artifact: artifacts/runs/turnover_abs_return_continuation_v3__20260711T043621Z__f6dc5bbe
+allowed_uses: [research_diagnostic, ml_candidate]
+prohibited_uses: [standalone_alpha, trade_signal, validation_substitute]
+rationale: >
+  The parent Alpha idea was rejected because its pre-registered raw primary
+  Gate failed in discovery. Retain this neutralized representation only as a
+  reusable diagnostic or a future ML candidate under a new, independently
+  registered research plan; it cannot rescue, replace, or reopen the rejected
+  plan's validation sequence.

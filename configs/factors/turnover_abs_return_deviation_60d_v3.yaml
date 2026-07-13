@@ -1,0 +1,39 @@
+version: 1
+kind: factor
+factor:
+  name: turnover_abs_return_deviation_60d_v3
+  label: Turnover displacement 60-day deviation V3
+  description: Absolute deviation of the current factor-eligible absorption gap from its lagged 60-day baseline; conditioning diagnostic only.
+  hypothesis: Any continuation signal is concentrated in the highest abnormal-deviation regime and this factor is not a standalone Alpha claim.
+  direction: positive
+  expected_shape: top_tail
+data:
+  frequency: daily
+  required_fields: [close, turnover_rate, industry_l1_code]
+  lookback_days: 61
+scope:
+  universe: factor_eligible
+  cross_section: market
+  group_field: industry_l1_code
+  industry_standard: SW2021
+  industry_level: L1
+  point_in_time_required: true
+  min_group_size: 10
+calculation:
+  parameters: {normal_window: {value: 60, robustness_neighbors: []}}
+  features:
+    ret_1d: ret(close, 1)
+    industry_ret_1d: group_mean(ret_1d, by=industry_l1_code)
+    relative_ret_1d: ret_1d - industry_ret_1d
+    turnover_score: cs_zscore(turnover_rate)
+    displacement_score: cs_zscore(abs(relative_ret_1d))
+    absorption_gap: turnover_score - displacement_score
+    historical_gap: lag(absorption_gap, 1)
+    normal_mean: mean(historical_gap, normal_window)
+    normal_std: std(historical_gap, normal_window)
+  formula: abs((absorption_gap - normal_mean) / normal_std)
+  missing_policy: skip
+  winsorize: mad
+  mad_scale: 5.0
+  standardize: none
+output: {value_field: factor_value}

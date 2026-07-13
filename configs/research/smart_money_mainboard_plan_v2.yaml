@@ -1,0 +1,53 @@
+version: 2
+kind: alpha_research_plan
+plan_id: plan_smart_money_mainboard_v2
+idea_id: idea_smart_money_mainboard_v1
+family_id: smart_money_active_flow_price_acceptance
+name: smart_money_mainboard_plan_v2
+status: frozen_after_implementation_invalid_trial
+supersedes: plan_smart_money_mainboard_v1
+revision_reason: M0 V1 was implementation-invalid because combination calculation used the liquid evaluation mask while L0 and prefix audit used factor_eligible; no predictive result was accessed.
+revision_consumes_hypothesis_budget: false
+
+source_plan: configs/research/smart_money_mainboard_plan_v1.yaml
+frozen_data_version: data_v1_20260712T131746Z_c365f6bc
+universe_policy:
+  factor_calculation_universe: factor_eligible
+  evaluation_universe: liquid
+  boards: [main]
+  excluded_boards: [chinext, star]
+
+primary_metric:
+  id: m2_increment_over_m0_liquid_industry_relative_5d_rank_ic
+  selector: {target: stock_minus_sw_l1_return, variant: industry_size_neutralized, universe: liquid, horizon: 5}
+  gate: {m2_min_mean: 0.01, m2_min_positive_ratio: 0.50, m2_max_fdr_q: 0.10, paired_m2_minus_m0_mean_gt: 0.0}
+
+implementation_correction:
+  file: src/factor_forge/experiments/runner.py
+  rule: Factor combinations calculate and normalize on factor_eligible; tradeable/liquid masks are evaluation-only; prefix audit reuses factor_eligible.
+  required_test: tests/test_smart_money_mainboard.py
+
+trials_already_consumed:
+  - {id: trial_smart_money_m0_invalid_scope_v1, external_run_id: smart_money_m0_price_baseline_v1__20260712T131827Z__d059969d, status: FAILED, reason: implementation_invalid_L0_scope_mismatch}
+remaining_trials:
+  - {order: 1, id: trial_smart_money_m0_discovery_v2, data_role: discovery, experiment_config: configs/experiments/smart_money_m0_price_baseline_discovery_v1.yaml, role: diagnostic_baseline}
+  - {order: 2, id: trial_smart_money_m1_discovery_v1, data_role: discovery, experiment_config: configs/experiments/smart_money_m1_flow_only_discovery_v1.yaml, role: diagnostic_descriptor}
+  - {order: 3, id: trial_smart_money_m2_discovery_v1, data_role: discovery, experiment_config: configs/experiments/smart_money_m2_price_plus_flow_discovery_v1.yaml, role: exact_primary_gate}
+
+deferred_due_to_budget:
+  - {id: trial_smart_money_m3_discovery_v1, reason: The implementation-invalid M0 attempt consumed the fourth Idea trial; acceptance/crowding interaction cannot be executed in this Idea without a separately authorized revision path.}
+
+decision_gate:
+  reject: M2 fails its exact Gate or paired M2-minus-M0 RankIC increment is not positive.
+  revise_one_hypothesis: One identified mechanism may use the single remaining revision budget; do not choose this route automatically.
+  observe_forward: M2 passes its exact Gate and the frozen paired M2-minus-M0 comparison is positive without configuration changes.
+  promote_candidate: forbidden_before_forward_evidence
+
+budgets:
+  idea: {max_trials: 4, trials_used: 1, trials_remaining: 3, max_revisions: 1, revisions_used: 0, max_validation_peeks: 2, validation_peeks_used: 0}
+  family: {max_trials: 25}
+
+execution_policy:
+  experiment_execution_authorized: true
+  execute_in_order: true
+  stop_on_primary_gate_failure: true

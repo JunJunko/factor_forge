@@ -1,0 +1,152 @@
+version: 2
+kind: alpha_research_plan
+plan_id: plan_turnover_abs_return_alpha_v2
+idea_id: idea_turnover_abs_return_alpha_v1
+family_id: turnover_price_impact
+name: turnover_abs_return_alpha_plan_v2
+status: frozen_for_review
+supersedes: plan_turnover_abs_return_alpha_v1
+revision_reason: >
+  Pre-trial implementation correction: execute the industry-relative target,
+  bind the deterministic Gate to one exact result, clarify calculation versus
+  evaluation universe, and add a paired composition-effect comparator.
+revision_consumes_budget: false
+
+source_drift:
+  drift_id: drift_variable_relation_drift_v1_cb10cae608d38325
+  relation_id: turnover_abs_return
+  definition_hash: 1c11f17bfbbd5d8bbadd9864afa1ef3e9cc8a365d6bf9327691c222001e2399c
+  card_sha256: 138bcb5528c2dca23c061c5d28225a0b01146bfe7bcbee0de5be2f3f02e287de
+  data_version: data_v1_20260710T115133Z_208e9fc8
+  effective_as_of_date: "2026-07-10"
+
+universe_policy:
+  factor_calculation_universe: factor_eligible_market
+  cross_section_transforms_use: factor_eligible_market
+  evaluation_universe: liquid
+  backtest_universe: liquid
+
+primary_metric:
+  id: liquid_stock_minus_sw_l1_return_5d_raw_daily_rank_ic
+  target: stock_minus_sw_l1_return
+  target_semantics: signal_date_pit_sw_l1_leave_one_out
+  variant: raw
+  universe: liquid
+  horizon: 5
+  statistic: daily_rank_ic
+  required_direction: positive
+  gate:
+    min_mean: 0.01
+    min_positive_ratio: 0.50
+    max_fdr_q: 0.10
+    allow_top_tail_fallback: false
+
+hypotheses:
+  - id: hyp_delayed_price_discovery_v1
+    role: primary
+    statement: >
+      High turnover relative to same-day industry-relative price displacement
+      reflects temporarily absorbed informed flow and predicts five-day continuation.
+  - id: hyp_liquidity_reversal_v1
+    role: competing_direction
+    alternative_to: hyp_delayed_price_discovery_v1
+    statement: >
+      High turnover with limited same-day displacement is non-informational
+      two-way liquidity demand and predicts five-day reversal.
+    discovery_rule: >
+      A negative primary discovery metric stops this plan with
+      revise_one_hypothesis; validation direction cannot be flipped in v2.
+  - id: hyp_cross_section_composition_v1
+    role: competing_mechanism
+    alternative_to: hyp_delayed_price_discovery_v1
+    statement: >
+      The market-level drift is caused by industry or cross-sectional composition
+      and should materially weaken after industry-within standardization.
+
+measurements:
+  - {id: relative_return_1d, bucket: descriptor, pit_available: true, lookback_days: 1}
+  - {id: turnover_score, bucket: descriptor, pit_available: true, lookback_days: 0}
+  - {id: displacement_score, bucket: descriptor, pit_available: true, lookback_days: 1}
+  - {id: absorption_gap, bucket: discriminator, pit_available: true, lookback_days: 1}
+  - {id: signed_absorption_gap, bucket: discriminator, pit_available: true, lookback_days: 1}
+  - {id: industry_signed_absorption_gap, bucket: discriminator, pit_available: true, lookback_days: 1}
+  - {id: absorption_gap_deviation_60d, bucket: context_control, pit_available: true, lookback_days: 61}
+  - {id: standard_exposure_diagnostics, bucket: context_control, pit_available: true, lookback_days: contract_defined}
+
+sample_policy:
+  discovery: {start: "2016-01-04", end: "2021-12-31"}
+  validation: {start: "2022-01-01", end: "2025-12-31"}
+  hypothesis_formation_embargo: {start: "2026-01-01", end: "2026-07-10"}
+  forward_observation_starts_after: "2026-07-10"
+  sealed_test_access: forbidden_without_separate_approval
+
+implementation_contract:
+  target_builder: factor_forge.evaluation.l1.build_forward_targets
+  primary_gate_evaluator: factor_forge.evaluation.l1._evaluate_primary_gate
+  daily_ic_artifact: l1_daily_rank_ic.parquet
+  composition_comparator: factor_forge.evaluation.compare_daily_rank_ic
+
+trials:
+  - id: trial_turnover_abs_return_discovery_v2
+    order: 1
+    data_role: discovery
+    experiment_config: configs/experiments/turnover_abs_return_discovery_v2.yaml
+    gate: exact_primary_metric_gate
+    failure_action: reject_or_revise_one_hypothesis
+  - id: trial_turnover_abs_return_validation_market_v2
+    order: 2
+    data_role: validation
+    requires: trial_turnover_abs_return_discovery_v2 passes without direction revision
+    experiment_config: configs/experiments/turnover_abs_return_validation_market_v2.yaml
+    gate: exact_primary_metric_gate
+  - id: trial_turnover_abs_return_validation_industry_v2
+    order: 3
+    data_role: validation
+    requires: trial_turnover_abs_return_validation_market_v2 passes
+    experiment_config: configs/experiments/turnover_abs_return_validation_industry_v2.yaml
+    gate: exact_primary_metric_gate
+  - id: trial_turnover_abs_return_validation_conditional_v2
+    order: 4
+    data_role: validation
+    requires: trial_turnover_abs_return_validation_industry_v2 completes
+    experiment_config: configs/experiments/turnover_abs_return_validation_conditional_v2.yaml
+    gate: diagnostic_q5_exact_metric_gate
+    cannot_rescue_failed_unconditional_validation: true
+
+composition_comparison:
+  inputs:
+    market_trial: trial_turnover_abs_return_validation_market_v2
+    industry_trial: trial_turnover_abs_return_validation_industry_v2
+    artifact: l1_daily_rank_ic.parquet
+    selector: {target: stock_minus_sw_l1_return, variant: raw, universe: liquid, horizon: 5}
+  alignment: inner_join_on_trade_date
+  thresholds: {min_overlap_days: 60, min_retention_ratio: 0.50, max_p_value: 0.10}
+  rules:
+    supports_composition: retention_ratio_below_threshold_and_negative_paired_delta_significant
+    weakens_composition: retention_ratio_at_or_above_threshold
+    otherwise: inconclusive_and_block_observe_forward
+
+conditional_diagnostic:
+  selector: {target: stock_minus_sw_l1_return, variant: raw, universe: liquid, horizon: 5, condition_quantile: 5}
+  support_gate: {min_mean: 0.01, min_positive_ratio: 0.50, max_fdr_q: 0.10}
+  contradiction_rule: mean_below_zero_with_fdr_q_at_or_below_0.10
+
+decision_gate:
+  reject: any required L0 or exact primary Gate fails without one identified revision
+  revise_one_hypothesis: discovery supports reversal or one implementation-valid mechanism needs revision
+  observe_forward: >
+    Trials 1 through 3 pass; paired comparison weakens the composition hypothesis;
+    Trial 4 does not trigger the contradiction rule; no configuration changed after validation access.
+  promote_candidate: forbidden_before_post_freeze_forward_evidence
+
+budgets:
+  idea: {max_trials: 4, max_revisions: 1, max_validation_peeks: 3}
+  family: {max_trials: 25, max_revisions: 10, max_validation_peeks: 8}
+  planned_consumption_if_all_run: {trials: 4, revisions: 0, validation_peeks: 3}
+
+execution_policy:
+  current_action: review_v2_implementation
+  experiment_execution_authorized: false
+  record_trial_only_when_execution_is_attempted: true
+  do_not_select_direction_on_validation: true
+

@@ -1,0 +1,10 @@
+version: 1
+id: momentum_participation_deterioration_v1
+kind: composite_anomaly
+description: 长窗口动量仍强但上涨日参与比例快速下降的内部恶化
+observation_type: relation_anomaly
+data: {required_fields: [adj_close], universe_field: is_liquid, entity_field: ts_code, date_field: trade_date, industry_field: industry_l1_code}
+scan: {discovery_window_days: 252, recent_window_days: 20}
+filters: {min_listing_days: 250, exclude_st: true, exclude_suspended: true, exclude_limit_locked: true}
+quality_gate: {min_events: 120, min_unique_stocks: 50, min_unique_industries: 10, max_industry_share: 0.40, max_single_stock_share: 0.05}
+parameters: {recipe: momentum_participation_deterioration, history: {window: 252, min_periods: 120}, short_window: 5, long_window: 20, upper_percentile: 0.90, lower_percentile: 0.10, change_threshold: 0.15, min_cross_section: 20}

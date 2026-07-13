@@ -127,6 +127,35 @@ class TrendExhaustionParameters(StrictModel):
     acceleration_extreme: float = Field(ge=0, le=0.5)
 
 
+CompositeRecipe = Literal[
+    "index_up_breadth_down",
+    "turnover_concentration",
+    "turnover_displacement_close_context",
+    "enhanced_stock_industry_residual",
+    "price_volume_conditional_residual",
+    "leader_industry_median_decoupling",
+    "failed_breakout",
+    "momentum_participation_deterioration",
+    "percentile_rapid_migration",
+    "short_long_percentile_conflict",
+    "turnover_residual_concentration",
+]
+
+
+class CompositeAnomalyParameters(StrictModel):
+    """Parameters shared by declarative, label-free composite anomaly recipes."""
+
+    recipe: CompositeRecipe
+    history: PercentileWindow
+    short_window: int = Field(default=5, ge=2)
+    long_window: int = Field(default=20, ge=5)
+    upper_percentile: float = Field(default=0.90, ge=0.5, le=1)
+    lower_percentile: float = Field(default=0.10, ge=0, le=0.5)
+    change_threshold: float = Field(default=0.30, ge=0, le=1)
+    min_cross_section: int = Field(default=20, ge=5)
+    liquidity_min_periods: int = Field(default=10, ge=2)
+
+
 class BaseTemplate(StrictModel):
     version: Literal[1]
     id: str = Field(pattern=r"^[a-z][a-z0-9_]+$")
@@ -182,6 +211,11 @@ class TrendExhaustionTemplate(BaseTemplate):
     parameters: TrendExhaustionParameters
 
 
+class CompositeAnomalyTemplate(BaseTemplate):
+    kind: Literal["composite_anomaly"]
+    parameters: CompositeAnomalyParameters
+
+
 RadarTemplate: TypeAlias = Annotated[
     PriceDropWithoutVolumeTemplate
     | VolumeSurgeWithoutImpactTemplate
@@ -190,7 +224,8 @@ RadarTemplate: TypeAlias = Annotated[
     | LongLowerWickStrongCloseTemplate
     | StockIndustryDivergenceTemplate
     | VolatilityCompressionBreakoutTemplate
-    | TrendExhaustionTemplate,
+    | TrendExhaustionTemplate
+    | CompositeAnomalyTemplate,
     Field(discriminator="kind"),
 ]
 RADAR_TEMPLATE_ADAPTER = TypeAdapter(RadarTemplate)
@@ -229,8 +264,10 @@ def required_trading_rows(template: RadarTemplate) -> int:
             template.parameters.breakout_history.window + template.parameters.breakout_window,
             template.parameters.amount_history.window,
         ) + 5
-    else:
+    elif isinstance(template, TrendExhaustionTemplate):
         history = template.parameters.history.window + template.parameters.long_horizon + 5
+    else:
+        history = template.parameters.history.window + template.parameters.long_window + 10
     return template.scan.discovery_window_days + history + 5
 
 

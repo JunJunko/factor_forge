@@ -1,0 +1,10 @@
+version: 1
+id: short_long_percentile_conflict_v1
+kind: composite_anomaly
+description: 成交额短窗口与长窗口历史分位出现显著冲突
+observation_type: relation_anomaly
+data: {required_fields: [adj_close, amount_cny], universe_field: is_liquid, entity_field: ts_code, date_field: trade_date, industry_field: industry_l1_code}
+scan: {discovery_window_days: 252, recent_window_days: 20}
+filters: {min_listing_days: 250, exclude_st: true, exclude_suspended: true, exclude_limit_locked: true}
+quality_gate: {min_events: 150, min_unique_stocks: 60, min_unique_industries: 10, max_industry_share: 0.40, max_single_stock_share: 0.05}
+parameters: {recipe: short_long_percentile_conflict, history: {window: 252, min_periods: 120}, short_window: 5, long_window: 20, upper_percentile: 0.90, lower_percentile: 0.10, change_threshold: 0.40, min_cross_section: 20}

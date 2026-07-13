@@ -1,0 +1,25 @@
+version: 1
+kind: factor
+factor:
+  name: prior_industry_relative_return_20d_v1
+  label: 20日行业相对趋势
+  description: 个股20日收益减PIT申万一级行业平均20日收益。
+  hypothesis: 普通价格趋势能够解释部分资金流与未来收益的表面关系。
+  direction: positive
+  expected_shape: monotonic
+data:
+  frequency: daily
+  required_fields: [close, industry]
+  lookback_days: 20
+scope: {universe: factor_eligible, cross_section: market, point_in_time_required: true, min_group_size: 10}
+calculation:
+  parameters: {}
+  features:
+    stock_return_20d: ret(close, 20)
+    industry_return_20d: group_mean(stock_return_20d, by=industry)
+  formula: stock_return_20d - industry_return_20d
+  missing_policy: skip
+  winsorize: mad
+  mad_scale: 5.0
+  standardize: zscore
+output: {value_field: factor_value}

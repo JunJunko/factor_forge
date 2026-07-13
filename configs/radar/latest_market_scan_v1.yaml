@@ -1,18 +1,12 @@
 version: 1
 name: latest_market_scan_v1
 project_config: configs/project.yaml
-event_templates:
-  - configs/radar/price_drop_without_volume_confirmation_v1.yaml
-  - configs/radar/volume_surge_without_price_impact_v1.yaml
-  - configs/radar/high_turnover_low_displacement_v1.yaml
-  - configs/radar/low_liquidity_large_displacement_v1.yaml
-  - configs/radar/long_lower_wick_strong_close_v1.yaml
-  - configs/radar/stock_industry_divergence_v1.yaml
-  - configs/radar/volatility_compression_breakout_v1.yaml
-  - configs/radar/trend_exhaustion_v1.yaml
-drift_templates:
-  - configs/drift/feature_return_relation_drift_v1.yaml
-  - configs/drift/variable_relation_drift_v1.yaml
+event_template_globs:
+  - configs/radar/*_v1.yaml
+drift_template_globs:
+  - configs/drift/*_v1.yaml
+template_excludes:
+  - latest_market_scan_v1.yaml
 event_output_root: artifacts/radar_observations
 drift_output_root: artifacts/radar_drifts
 output_root: artifacts/market_anomaly_scans

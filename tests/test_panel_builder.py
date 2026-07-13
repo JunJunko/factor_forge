@@ -65,3 +65,42 @@ def test_l2_industry_membership_uses_level_specific_columns():
     assert panel.loc[0, "industry_l2_code"] == "801016.SI"
     assert panel.loc[0, "industry_l2_name"] == "种植业"
     assert "industry_l1_code" not in panel
+
+
+def test_panel_filters_to_configured_security_master_and_converts_moneyflow_units():
+    daily = pd.DataFrame({
+        "trade_date": ["20240102", "20240102"],
+        "ts_code": ["600000.SH", "300001.SZ"],
+        "open": [10.0, 20.0], "high": [10.2, 20.2], "low": [9.9, 19.9],
+        "close": [10.1, 20.1], "pre_close": [10.0, 20.0],
+        "vol": [100.0, 100.0], "amount": [1000.0, 1000.0], "pct_chg": [1.0, 0.5],
+    })
+    datasets = {
+        "daily": daily,
+        "adj_factor": pd.DataFrame({
+            "trade_date": ["20240102", "20240102"],
+            "ts_code": ["600000.SH", "300001.SZ"], "adj_factor": [1.0, 1.0],
+        }),
+        "daily_basic": pd.DataFrame(), "stk_limit": pd.DataFrame(),
+        "suspend": pd.DataFrame({"trade_date": ["20240102"], "ts_code": ["300002.SZ"]}),
+        "stock_basic": pd.DataFrame({"ts_code": ["600000.SH"], "market": ["主板"]}),
+        "moneyflow": pd.DataFrame({
+            "trade_date": ["20240102", "20240102"],
+            "ts_code": ["600000.SH", "300001.SZ"], "net_mf_amount": [12.5, 99.0],
+            "buy_sm_amount": [30.0, 1.0], "sell_sm_amount": [20.0, 1.0],
+            "buy_lg_amount": [40.0, 1.0], "sell_lg_amount": [10.0, 1.0],
+            "buy_elg_amount": [50.0, 1.0], "sell_elg_amount": [5.0, 1.0],
+        }),
+        "industry_membership": pd.DataFrame(), "st_status": pd.DataFrame(),
+        "st_status_coverage": pd.DataFrame({"trade_date": ["20240102"]}),
+    }
+    project = ProjectConfig.model_validate({"data": {"boards": ["main"], "listing_age_days": 1,
+        "liquidity": {"window": 1, "min_avg_amount_cny": 1, "min_traded_days": 1}}})
+
+    panel = DailyPanelBuilder(project).build(datasets)
+
+    assert panel["ts_code"].tolist() == ["600000.SH"]
+    assert panel.loc[0, "net_mf_amount_cny"] == 125_000
+    assert panel.loc[0, "buy_sm_amount_cny"] == 300_000
+    assert panel.loc[0, "sell_lg_amount_cny"] == 100_000
+    assert panel.loc[0, "buy_elg_amount_cny"] == 500_000

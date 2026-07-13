@@ -1,0 +1,175 @@
+version: 1
+kind: alpha_research_plan
+plan_id: plan_order_size_flow_diffusion_v1
+idea_id: idea_order_size_diffusion_v1
+family_id: order_size_flow_diffusion_exhaustion
+name: order_size_flow_diffusion_plan_v1
+status: frozen_before_discovery_execution
+
+source_fingerprint:
+  universe: SSE_SZSE_main_board_only
+  distinctive_terms:
+    - tushare_order_size_moneyflow
+    - large_order_lead
+    - delayed_small_order_following
+    - retail_diffusion
+    - exhaustion
+
+research_question: >
+  在总主动净流入相近且控制行业、趋势、规模、换手和流动性后，
+  大单资金先行而小单尚未集中跟随，是否比大小单同步极端流入包含更多未来5日行业相对收益信息。
+
+universe_policy:
+  exchanges: [SSE, SZSE]
+  boards: [main]
+  excluded_boards: [chinext, star]
+  listing_trade_days_min: 120
+  factor_calculation_universe: factor_eligible
+  evaluation_universe: liquid
+  signal_time: T_CLOSE
+  execution_time: T_PLUS_1_OPEN
+
+hypotheses:
+  - {id: hyp_large_lead_delayed_retail_v1, role: primary}
+  - {id: hyp_public_news_common_shock_v1, role: competing_mechanism, alternative_to: hyp_large_lead_delayed_retail_v1}
+  - {id: hyp_retail_diffusion_continuation_v1, role: competing_direction, alternative_to: hyp_large_lead_delayed_retail_v1}
+  - {id: hyp_large_order_classification_noise_v1, role: measurement_alternative, alternative_to: hyp_large_lead_delayed_retail_v1}
+
+measurements:
+  - id: large_flow_ratio
+    bucket: descriptor
+    formula: (buy_lg_amount + buy_elg_amount - sell_lg_amount - sell_elg_amount) / amount_cny
+    pit_available: T_CLOSE
+    lookback_days: 0
+    missing_behavior: skip
+    hypothesized_direction: positive_conditional
+  - id: small_flow_ratio
+    bucket: descriptor
+    formula: (buy_sm_amount - sell_sm_amount) / amount_cny
+    pit_available: T_CLOSE
+    lookback_days: 0
+    missing_behavior: skip
+    hypothesized_direction: non_monotonic
+  - id: large_lead_3d
+    bucket: descriptor
+    formula: mean(lag(large_flow_abnormal_120d, 1), 3)
+    pit_available: true
+    lookback_days: 122
+    missing_behavior: require_full_window
+    hypothesized_direction: positive_conditional
+  - id: small_follow_acceleration_3d
+    bucket: discriminator
+    formula: small_flow_abnormal_120d - mean(lag(small_flow_abnormal_120d, 1), 3)
+    pit_available: T_CLOSE
+    lookback_days: 122
+    missing_behavior: require_full_window
+    hypothesized_direction: non_monotonic
+  - id: order_size_diffusion_gap
+    bucket: discriminator
+    formula: large_lead_3d - small_flow_abnormal_120d
+    pit_available: T_CLOSE
+    lookback_days: 122
+    missing_behavior: skip
+    hypothesized_direction: positive
+  - id: total_active_flow_ratio
+    bucket: context_control
+    formula: net_mf_amount_cny / amount_cny
+    pit_available: T_CLOSE
+    lookback_days: 0
+    missing_behavior: skip
+    hypothesized_direction: control_only
+  - id: prior_industry_relative_return_20d
+    bucket: context_control
+    formula: stock_20d_return_minus_pit_sw_l1_mean
+    pit_available: true
+    lookback_days: 20
+    missing_behavior: skip
+    hypothesized_direction: control_only
+  - id: turnover_abnormal_120d
+    bucket: context_control
+    formula: rolling_population_z_clipped_5
+    pit_available: T_CLOSE
+    lookback_days: 119
+    missing_behavior: skip
+    hypothesized_direction: control_only
+
+expression_gate:
+  route: dsl_extension_then_fixed_factor_combinations
+  status: passed
+  required_source_fields:
+    - buy_sm_amount_cny
+    - sell_sm_amount_cny
+    - buy_lg_amount_cny
+    - sell_lg_amount_cny
+    - buy_elg_amount_cny
+    - sell_elg_amount_cny
+  required_contract_work:
+    - extend_tushare_moneyflow_ingestion_and_unit_conversion
+    - add_fields_to_field_dictionary
+    - add_panel_quality_and_temporal_tests
+    - confirm_lag_operator_contract_or_use_audited_equivalent
+  reason: >
+    订单规模字段已进入不可变标准面板和字段契约；lag为现有审计算子，三个原子因子及四个固定组合均已通过测试。
+
+sample_policy:
+  discovery: {start: "2016-01-04", end: "2021-12-31"}
+  validation: {start: "2022-01-01", end: "2025-12-31"}
+  forward_observation_starts_after: "2026-07-13"
+  sealed_test_access: forbidden_without_separate_approval
+
+primary_metric:
+  id: m2_increment_over_m0_liquid_industry_relative_5d_rank_ic
+  target: stock_minus_sw_l1_return
+  variant: industry_size_neutralized
+  universe: liquid
+  horizon: 5
+  required_direction: positive
+  candidate_gate:
+    m2_min_mean: 0.01
+    m2_min_positive_ratio: 0.50
+    m2_max_fdr_q: 0.10
+    paired_m2_minus_m0_mean_gt: 0.0
+
+planned_trials:
+  - order: 1
+    id: trial_order_size_m0_discovery_v1
+    data_role: discovery
+    role: total_flow_price_liquidity_baseline
+    experiment_config: configs/experiments/order_size_m0_baseline_discovery_v1.yaml
+  - order: 2
+    id: trial_order_size_m1_discovery_v1
+    data_role: discovery
+    role: large_lead_descriptor
+    experiment_config: configs/experiments/order_size_m1_large_lead_discovery_v1.yaml
+  - order: 3
+    id: trial_order_size_m2_discovery_v1
+    data_role: discovery
+    role: exact_primary_diffusion_gate
+    experiment_config: configs/experiments/order_size_m2_diffusion_discovery_v1.yaml
+  - order: 4
+    id: trial_order_size_m3_discovery_v1
+    data_role: discovery
+    role: retail_continuation_competing_direction
+    requires: trial_order_size_m2_discovery_v1_passes
+    experiment_config: configs/experiments/order_size_m3_retail_continuation_discovery_v1.yaml
+
+decision_gate:
+  reject: M2 fails its exact Gate or the paired M2-minus-M0 RankIC increment is not positive.
+  revise_one_hypothesis: One implementation-valid measurement or mechanism issue is identified within the single revision budget.
+  observe_forward: M2 passes, its paired increment is positive, M3 does not contradict the registered interpretation, and validation later passes unchanged.
+  promote_candidate: forbidden_before_forward_evidence
+
+budgets:
+  idea: {max_trials: 4, max_revisions: 1, max_validation_peeks: 2}
+  planned_consumption: {trials: 4, revisions: 0, validation_peeks: 0}
+
+execution_policy:
+  experiment_execution_authorized: true
+  frozen_data_version: data_v1_20260713T004235Z_218530b2
+  data_audit:
+    mainboard_rows: 7134525
+    moneyflow_rows: 6993076
+    all_six_order_size_coverage: 0.9994179002878771
+    negative_component_ratio: 0.0
+    max_single_component_amount_bound_violation_ratio: 0.000007574585009210266
+  current_action: execute_trials_in_registered_order

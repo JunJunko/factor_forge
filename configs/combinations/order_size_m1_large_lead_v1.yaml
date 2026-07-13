@@ -1,0 +1,18 @@
+version: 1
+kind: factor_combination
+factor_combination:
+  id: order_size_m1_large_lead_v1
+  name: 订单规模迁移M1大单先行描述
+  description: 在M0上加入严格滞后的三日大单资金异常。
+  components:
+    - {id: total_flow, source: {type: yaml, path: ../factors/smart_flow_abnormal_120d_v1.yaml}, direction: positive, weight: 0.20}
+    - {id: trend, source: {type: yaml, path: ../factors/prior_industry_relative_return_20d_v1.yaml}, direction: positive, weight: 0.20}
+    - {id: turnover_risk, source: {type: yaml, path: ../factors/turnover_abnormal_120d_v1.yaml}, direction: negative, weight: 0.15}
+    - {id: volatility_risk, source: {type: yaml, path: ../factors/volatility_20d_v1.yaml}, direction: negative, weight: 0.15}
+    - {id: large_lead, source: {type: yaml, path: ../factors/large_order_lead_3d_v1.yaml}, direction: positive, weight: 0.30}
+  preprocessing:
+    winsorize: {enabled: true, method: percentile, lower: 0.01, upper: 0.99}
+    normalization: {method: cs_zscore, scope: trade_date, min_samples: 100}
+    missing_value: {method: intersection, minimum_valid_components: 5}
+  combination: {method: weighted_sum, normalize_weights: true}
+  output: {direction: positive, column: factor_value}

@@ -75,16 +75,25 @@ class TushareIngestor:
             for status in ["L", "D", "P"]
         ], ignore_index=True).drop_duplicates("ts_code")
         stocks = stocks[stocks["exchange"].isin(self.project.data.exchanges)]
-        stocks = stocks[stocks["market"].isin(["主板", "创业板", "科创板"])]
+        board_names = {"main": "主板", "chinext": "创业板", "star": "科创板"}
+        unknown_boards = set(self.project.data.boards) - set(board_names)
+        if unknown_boards:
+            raise ValueError(f"Unsupported board identifiers: {sorted(unknown_boards)}")
+        allowed_markets = {board_names[item] for item in self.project.data.boards}
+        stocks = stocks[stocks["market"].isin(allowed_markets)]
         calendar = self.provider.query("trade_cal", exchange="SSE", start_date=start_date, end_date=end_date)
         open_dates = calendar.loc[calendar["is_open"].astype(int) == 1, "cal_date"].tolist()
         dataset_names = ["daily", "adj_factor", "daily_basic", "stk_limit", "suspend", "st_status"]
+        if self.project.data.include_moneyflow:
+            dataset_names.append("moneyflow")
         staging = self._staging_dir(start_date, end_date)
         staging.mkdir(parents=True, exist_ok=True)
         endpoint_map = {
             "daily": "daily", "adj_factor": "adj_factor", "daily_basic": "daily_basic",
             "stk_limit": "stk_limit", "suspend": "suspend_d", "st_status": "stock_st",
         }
+        if self.project.data.include_moneyflow:
+            endpoint_map["moneyflow"] = "moneyflow"
         st_checked_dates: list[str] = []
         for position, date in enumerate(open_dates, start=1):
             for name, endpoint in endpoint_map.items():
@@ -109,6 +118,11 @@ class TushareIngestor:
             "stk_limit": ["trade_date", "ts_code", "up_limit", "down_limit"],
             "suspend": ["trade_date", "ts_code"],
             "st_status": ["trade_date", "ts_code", "name", "type"],
+            "moneyflow": [
+                "trade_date", "ts_code", "net_mf_amount",
+                "buy_sm_amount", "sell_sm_amount", "buy_lg_amount", "sell_lg_amount",
+                "buy_elg_amount", "sell_elg_amount",
+            ],
         }
         for name in dataset_names:
             files = sorted((staging / name).glob("trade_date=*.parquet"))

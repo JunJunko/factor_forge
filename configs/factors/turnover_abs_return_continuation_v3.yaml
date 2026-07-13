@@ -1,0 +1,36 @@
+version: 1
+kind: factor
+factor:
+  name: turnover_abs_return_continuation_v3
+  label: Turnover displacement continuation V3
+  description: Factor-eligible market cross-section turnover-minus-displacement score, signed by PIT industry-relative return.
+  hypothesis: Delayed price discovery predicts continuation; a negative discovery result supports the competing liquidity-reversal hypothesis and cannot be direction-flipped during validation.
+  direction: positive
+  expected_shape: monotonic
+data:
+  frequency: daily
+  required_fields: [close, turnover_rate, industry_l1_code]
+  lookback_days: 1
+scope:
+  universe: factor_eligible
+  cross_section: market
+  group_field: industry_l1_code
+  industry_standard: SW2021
+  industry_level: L1
+  point_in_time_required: true
+  min_group_size: 10
+calculation:
+  parameters: {}
+  features:
+    ret_1d: ret(close, 1)
+    industry_ret_1d: group_mean(ret_1d, by=industry_l1_code)
+    relative_ret_1d: ret_1d - industry_ret_1d
+    turnover_score: cs_zscore(turnover_rate)
+    displacement_score: cs_zscore(abs(relative_ret_1d))
+    absorption_gap: turnover_score - displacement_score
+  formula: where(relative_ret_1d >= 0, absorption_gap, -absorption_gap)
+  missing_policy: skip
+  winsorize: mad
+  mad_scale: 5.0
+  standardize: zscore
+output: {value_field: factor_value}

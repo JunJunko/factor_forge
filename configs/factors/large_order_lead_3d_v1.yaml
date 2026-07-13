@@ -1,0 +1,31 @@
+version: 1
+kind: factor
+factor:
+  name: large_order_lead_3d_v1
+  label: 大单资金提前三日异常
+  description: 大单与特大单净流入占成交额比例的120日异常度，在严格滞后一天后的三日均值。
+  hypothesis: 大单资金提前积累比当日总净流入包含不同的订单规模迁移信息。
+  direction: positive
+  expected_shape: unknown
+data:
+  frequency: daily
+  required_fields: [buy_lg_amount_cny, sell_lg_amount_cny, buy_elg_amount_cny, sell_elg_amount_cny, amount]
+  lookback_days: 122
+scope: {universe: factor_eligible, cross_section: market, point_in_time_required: true, min_group_size: 10}
+calculation:
+  parameters:
+    history_window: {value: 120, robustness_neighbors: []}
+    lead_window: {value: 3, robustness_neighbors: []}
+  features:
+    large_net: buy_lg_amount_cny + buy_elg_amount_cny - sell_lg_amount_cny - sell_elg_amount_cny
+    large_ratio: large_net / (amount + 1.0)
+    large_mean: mean(large_ratio, history_window)
+    large_std: std(large_ratio, history_window)
+    large_z: clip((large_ratio - large_mean) / (large_std + 0.000001), lower=-5.0, upper=5.0)
+    prior_large_z: lag(large_z, 1)
+  formula: mean(prior_large_z, lead_window)
+  missing_policy: skip
+  winsorize: none
+  mad_scale: 5.0
+  standardize: none
+output: {value_field: factor_value}

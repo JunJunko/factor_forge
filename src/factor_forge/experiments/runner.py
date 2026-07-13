@@ -134,10 +134,11 @@ class ExperimentRunner:
             combination_result = None
             if combination_spec:
                 requested = set(experiment.stage_l1.universes) | set(experiment.stage_l2.universes)
+                # Factor calculation uses the PIT factor-eligible universe. The
+                # requested tradeable/liquid universes belong to evaluation and
+                # backtesting only; intersecting them here makes L0 coverage use
+                # a different denominator and contaminates cross-sectional ranks.
                 scope_mask = panel["is_factor_eligible"].fillna(False).astype(bool)
-                if requested:
-                    universe_masks = [panel[f"is_{name}"].fillna(False).astype(bool) for name in requested]
-                    scope_mask &= np.logical_or.reduce(universe_masks)
                 dates = pd.to_datetime(panel["trade_date"])
                 combination_result = FactorCombinationEngine().run(
                     panel, factor_path, scope_mask=scope_mask,
@@ -154,7 +155,8 @@ class ExperimentRunner:
                 factor_values = FactorEngine().compute(panel, factor)
             if combination_spec:
                 audit_compute = lambda prefix: FactorCombinationEngine().run(
-                    prefix, factor_path
+                    prefix, factor_path,
+                    scope_mask=prefix["is_factor_eligible"].fillna(False).astype(bool),
                 ).factor_values
             else:
                 audit_compute = lambda prefix: FactorEngine().compute(prefix, factor)
@@ -241,6 +243,10 @@ class ExperimentRunner:
                 assessment["hard_flags"]["data_coverage"] = True
                 return self._finish(artifacts, manifest, assessment, l0, l1, [], started, "INVALID_DATA_COVERAGE")
             l1 = evaluate_predictive_power(panel, factor_values, factor, experiment.stage_l1)
+            daily_rank_ic = l1.pop("daily_rank_ic", [])
+            if daily_rank_ic:
+                artifacts.parquet("l1_daily_rank_ic.parquet", pd.DataFrame(daily_rank_ic))
+                l1["daily_rank_ic_artifact"] = "l1_daily_rank_ic.parquet"
             if conditional_config.enabled:
                 conditional_result, conditional_daily = evaluate_conditional_ic(
                     panel, factor_values, conditioning_values, factor, experiment.stage_l1,

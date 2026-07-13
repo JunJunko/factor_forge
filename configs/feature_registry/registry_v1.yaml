@@ -1,0 +1,4 @@
+version: 1
+kind: feature_registry
+entries:
+  - turnover_abs_return_industry_size_neutralized_v1.yaml

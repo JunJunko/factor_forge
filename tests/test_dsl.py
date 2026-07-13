@@ -82,6 +82,20 @@ def test_industry_rank_respects_group_boundaries(panel):
     assert latest.groupby("group_code").factor_value.max().eq(1.0).all()
 
 
+def test_factor_eligible_scope_masks_cross_sectional_calculation(panel):
+    panel = panel.copy()
+    panel["is_factor_eligible"] = panel["ts_code"].ne("000000.SZ")
+    panel.loc[panel["ts_code"].eq("000000.SZ"), "adj_close"] = 1_000_000
+    spec = factor_spec("cs_zscore(close)")
+    spec.scope.universe = "factor_eligible"
+    result = FactorEngine().compute(panel, spec)
+    ineligible = result["ts_code"].eq("000000.SZ")
+    assert result.loc[ineligible, "factor_value"].isna().all()
+    latest = result.loc[result["trade_date"].eq(result["trade_date"].max()) & ~ineligible]
+    assert latest["factor_value"].mean() == pytest.approx(0.0)
+    assert latest["factor_value"].std(ddof=0) == pytest.approx(1.0)
+
+
 def test_l2_industry_rank_uses_configured_group_field(panel):
     panel = panel.copy()
     panel["industry_l2_code"] = panel["industry_l1_code"]

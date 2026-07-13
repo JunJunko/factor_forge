@@ -102,6 +102,7 @@ def test_declarative_experiment_runs_without_factor_code_changes(tmp_path):
     assert (run_dir / "conditioning_factor_values.parquet").exists()
     assert (run_dir / "l1_conditional_ic_summary.csv").exists()
     assert (run_dir / "l1_conditional_ic_daily.parquet").exists()
+    assert (run_dir / "l1_daily_rank_ic.parquet").exists()
     assert (run_dir / "l2_condition_membership.parquet").exists()
     assert (run_dir / "l2_condition_filter_summary.csv").exists()
     assert (run_dir / "alpha_assessment.json").exists()

@@ -5,7 +5,7 @@ import math
 import numpy as np
 import pandas as pd
 
-from factor_forge.config import FactorSpec, L1Config
+from factor_forge.config import FactorSpec, L1Config, PrimaryGateConfig
 from .neutralization import build_variants
 
 
@@ -16,6 +16,21 @@ def _forward_open_return(panel: pd.DataFrame, horizon: int) -> pd.Series:
     exit_price = grouped.shift(-(horizon + 1))
     result = exit_price / entry - 1.0
     return result.reindex(panel.index)
+
+
+def build_forward_targets(panel: pd.DataFrame, horizon: int) -> dict[str, pd.Series]:
+    """Build PIT signal-date stock and leave-one-out SW L1 relative returns."""
+    stock_return = _forward_open_return(panel, horizon)
+    industry = panel["industry_l1_code"]
+    valid = stock_return.notna() & industry.notna()
+    keys = [panel["trade_date"], industry]
+    total = stock_return.where(valid).groupby(keys).transform("sum")
+    count = stock_return.where(valid).groupby(keys).transform("count")
+    peer_return = (total - stock_return) / (count - 1).replace(0, np.nan)
+    return {
+        "stock_return": stock_return,
+        "stock_minus_sw_l1_return": stock_return - peer_return,
+    }
 
 
 def _daily_correlation(group: pd.DataFrame, method: str) -> pd.Series:
@@ -105,6 +120,74 @@ def _fdr_bh(rows: list[dict], p_value_key: str = "p_value") -> None:
         rows[row_index]["fdr_q"] = float(q_value)
 
 
+def _evaluate_primary_gate(
+    rows: list[dict],
+    gate: PrimaryGateConfig,
+    *,
+    condition_quantile: int | None = None,
+) -> dict:
+    matches = [
+        row for row in rows
+        if row.get("target") == gate.target
+        and row.get("variant") == gate.variant
+        and row.get("universe") == gate.universe
+        and row.get("horizon") == gate.horizon
+        and (
+            condition_quantile is None
+            or row.get("condition_quantile") == condition_quantile
+        )
+    ]
+    selector = {
+        "target": gate.target,
+        "variant": gate.variant,
+        "universe": gate.universe,
+        "horizon": gate.horizon,
+        "metric": gate.metric,
+    }
+    if condition_quantile is not None:
+        selector["condition_quantile"] = condition_quantile
+    if len(matches) != 1:
+        return {
+            "passed": False,
+            "selector": selector,
+            "reason": f"expected exactly one primary result, found {len(matches)}",
+            "checks": {},
+        }
+    row = matches[0]
+    summary = row[gate.metric]
+    mean = summary.get("mean")
+    positive_ratio = summary.get("positive_ratio")
+    fdr_q = row.get("fdr_q")
+    checks = {
+        "mean": mean is not None and mean >= gate.min_mean,
+        "positive_ratio": (
+            positive_ratio is not None and positive_ratio >= gate.min_positive_ratio
+        ),
+        "fdr_q": gate.max_fdr_q is None or (fdr_q is not None and fdr_q <= gate.max_fdr_q),
+    }
+    tail_fallback = bool(
+        gate.allow_top_tail_fallback and (row.get("top_bottom_mean") or 0) > 0
+    )
+    return {
+        "passed": all(checks.values()) or tail_fallback,
+        "selector": selector,
+        "thresholds": {
+            "min_mean": gate.min_mean,
+            "min_positive_ratio": gate.min_positive_ratio,
+            "max_fdr_q": gate.max_fdr_q,
+            "allow_top_tail_fallback": gate.allow_top_tail_fallback,
+        },
+        "observed": {
+            "mean": mean,
+            "positive_ratio": positive_ratio,
+            "fdr_q": fdr_q,
+            "top_bottom_mean": row.get("top_bottom_mean"),
+        },
+        "checks": checks,
+        "tail_fallback_used": tail_fallback and not all(checks.values()),
+    }
+
+
 def _assign_daily_condition_quantiles(frame: pd.DataFrame, groups: int) -> pd.Series:
     output = pd.Series(pd.NA, index=frame.index, dtype="Int64")
     for _, indexes in frame.groupby("trade_date").groups.items():
@@ -147,69 +230,74 @@ def evaluate_conditional_ic(
     rows: list[dict] = []
     daily_records: list[dict] = []
     for horizon in config.forward_horizons:
-        merged[f"forward_{horizon}"] = _forward_open_return(merged, horizon)
-        for universe in config.universes:
-            universe_mask = merged[f"is_{universe}"].fillna(False).astype(bool)
-            for variant_name, values in variants.items():
-                sample = merged.loc[
-                    universe_mask, ["trade_date", "condition_factor", f"forward_{horizon}"]
-                ].copy()
-                sample = sample.dropna(subset=["condition_factor"])
-                sample["condition_quantile"] = _assign_daily_condition_quantiles(
-                    sample, conditional.quantile_groups
-                )
-                sample["factor"] = values.loc[universe_mask]
-                sample = sample.rename(columns={f"forward_{horizon}": "forward_return"})
-                sample = sample.dropna(subset=["factor", "forward_return", "condition_quantile"])
-                daily_size = sample.groupby("trade_date").size()
-                valid_dates = daily_size[daily_size >= config.min_cross_section].index
-                sample = sample[sample["trade_date"].isin(valid_dates)].copy()
-
-                for quantile in range(1, conditional.quantile_groups + 1):
-                    bucket = sample.loc[sample["condition_quantile"] == quantile].copy()
-                    bucket_size = bucket.groupby("trade_date").size()
-                    bucket_dates = bucket_size[bucket_size >= conditional.min_group_size].index
-                    bucket = bucket[bucket["trade_date"].isin(bucket_dates)]
-                    rank_ic = (
-                        _daily_correlation(bucket, "spearman")
-                        if len(bucket) else pd.Series(dtype=float)
+        targets = build_forward_targets(merged, horizon)
+        for target_name in config.targets:
+            forward_column = f"forward_{target_name}_{horizon}"
+            merged[forward_column] = targets[target_name]
+            for universe in config.universes:
+                universe_mask = merged[f"is_{universe}"].fillna(False).astype(bool)
+                for variant_name, values in variants.items():
+                    sample = merged.loc[
+                        universe_mask, ["trade_date", "condition_factor", forward_column]
+                    ].copy()
+                    sample = sample.dropna(subset=["condition_factor"])
+                    sample["condition_quantile"] = _assign_daily_condition_quantiles(
+                        sample, conditional.quantile_groups
                     )
-                    summary = _summary(rank_ic)
-                    summary.update(_newey_west_stats(rank_ic, max_lags=max(horizon - 1, 0)))
-                    row = {
-                        "conditioning_factor": conditioning_factor_name,
-                        "variant": variant_name,
-                        "universe": universe,
-                        "horizon": horizon,
-                        "condition_quantile": quantile,
-                        "observations": int(len(bucket)),
-                        "days": int(rank_ic.notna().sum()),
-                        "mean_group_size": float(bucket_size.loc[bucket_dates].mean()) if len(bucket_dates) else None,
-                        "condition_value_min": float(bucket["condition_factor"].min()) if len(bucket) else None,
-                        "condition_value_median": float(bucket["condition_factor"].median()) if len(bucket) else None,
-                        "condition_value_max": float(bucket["condition_factor"].max()) if len(bucket) else None,
-                        "mean_forward_return": float(bucket["forward_return"].mean()) if len(bucket) else None,
-                        "rank_ic": summary,
-                        "significance_rank": None,
-                        "fdr_q": None,
-                    }
-                    rows.append(row)
-                    for trade_date, ic in rank_ic.dropna().items():
-                        daily_records.append({
-                            "trade_date": trade_date,
+                    sample["factor"] = values.loc[universe_mask]
+                    sample = sample.rename(columns={forward_column: "forward_return"})
+                    sample = sample.dropna(subset=["factor", "forward_return", "condition_quantile"])
+                    daily_size = sample.groupby("trade_date").size()
+                    valid_dates = daily_size[daily_size >= config.min_cross_section].index
+                    sample = sample[sample["trade_date"].isin(valid_dates)].copy()
+
+                    for quantile in range(1, conditional.quantile_groups + 1):
+                        bucket = sample.loc[sample["condition_quantile"] == quantile].copy()
+                        bucket_size = bucket.groupby("trade_date").size()
+                        bucket_dates = bucket_size[bucket_size >= conditional.min_group_size].index
+                        bucket = bucket[bucket["trade_date"].isin(bucket_dates)]
+                        rank_ic = (
+                            _daily_correlation(bucket, "spearman")
+                            if len(bucket) else pd.Series(dtype=float)
+                        )
+                        summary = _summary(rank_ic)
+                        summary.update(_newey_west_stats(rank_ic, max_lags=max(horizon - 1, 0)))
+                        row = {
                             "conditioning_factor": conditioning_factor_name,
+                            "target": target_name,
                             "variant": variant_name,
                             "universe": universe,
                             "horizon": horizon,
                             "condition_quantile": quantile,
-                            "observations": int(bucket_size.get(trade_date, 0)),
-                            "rank_ic": float(ic),
-                        })
+                            "observations": int(len(bucket)),
+                            "days": int(rank_ic.notna().sum()),
+                            "mean_group_size": float(bucket_size.loc[bucket_dates].mean()) if len(bucket_dates) else None,
+                            "condition_value_min": float(bucket["condition_factor"].min()) if len(bucket) else None,
+                            "condition_value_median": float(bucket["condition_factor"].median()) if len(bucket) else None,
+                            "condition_value_max": float(bucket["condition_factor"].max()) if len(bucket) else None,
+                            "mean_forward_return": float(bucket["forward_return"].mean()) if len(bucket) else None,
+                            "rank_ic": summary,
+                            "significance_rank": None,
+                            "fdr_q": None,
+                        }
+                        rows.append(row)
+                        for trade_date, ic in rank_ic.dropna().items():
+                            daily_records.append({
+                                "trade_date": trade_date,
+                                "conditioning_factor": conditioning_factor_name,
+                                "target": target_name,
+                                "variant": variant_name,
+                                "universe": universe,
+                                "horizon": horizon,
+                                "condition_quantile": quantile,
+                                "observations": int(bucket_size.get(trade_date, 0)),
+                                "rank_ic": float(ic),
+                            })
 
     _fdr_bh(rows, p_value_key="nw_p_value")
     context_groups: dict[tuple, list[dict]] = {}
     for row in rows:
-        context = (row["variant"], row["universe"], row["horizon"])
+        context = (row["target"], row["variant"], row["universe"], row["horizon"])
         context_groups.setdefault(context, []).append(row)
     strongest_by_context = []
     for context_rows in context_groups.values():
@@ -227,18 +315,27 @@ def evaluate_conditional_ic(
     strongest = max(
         significant, key=lambda row: abs(row["rank_ic"]["nw_t_value"]), default=None
     )
+    primary_gate = None
+    if conditional.primary_gate is not None:
+        primary_gate = _evaluate_primary_gate(
+            rows,
+            conditional.primary_gate,
+            condition_quantile=conditional.primary_gate.condition_quantile,
+        )
     result = {
         "enabled": True,
         "conditioning_factor": conditioning_factor_name,
         "quantile_groups": conditional.quantile_groups,
         "min_group_size": conditional.min_group_size,
         "inference": "Newey-West HAC with max_lags=horizon-1; FDR is Benjamini-Hochberg across conditional tests",
+        "passed": primary_gate["passed"] if primary_gate is not None else None,
+        "primary_gate": primary_gate,
         "strongest_result": strongest,
         "strongest_by_context": strongest_by_context,
         "results": rows,
     }
     daily_columns = [
-        "trade_date", "conditioning_factor", "variant", "universe", "horizon",
+        "trade_date", "conditioning_factor", "target", "variant", "universe", "horizon",
         "condition_quantile", "observations", "rank_ic",
     ]
     return result, pd.DataFrame(daily_records, columns=daily_columns)
@@ -259,33 +356,65 @@ def evaluate_predictive_power(
     if spec.factor.direction == "unknown":
         variants.update({f"{name}_negative": -value for name, value in list(variants.items())})
     rows: list[dict] = []
+    daily_records: list[dict] = []
     for horizon in config.forward_horizons:
-        merged[f"forward_{horizon}"] = _forward_open_return(merged, horizon)
-        for universe in config.universes:
-            universe_mask = merged[f"is_{universe}"].fillna(False).astype(bool)
-            for variant_name, values in variants.items():
-                sample = merged.loc[universe_mask, ["trade_date", f"forward_{horizon}"]].copy()
-                sample["factor"] = values.loc[universe_mask]
-                sample = sample.rename(columns={f"forward_{horizon}": "forward_return"})
-                sample = sample.dropna()
-                daily_size = sample.groupby("trade_date").size()
-                sample = sample[sample["trade_date"].isin(daily_size[daily_size >= config.min_cross_section].index)]
-                rank_ic = _daily_correlation(sample, "spearman") if len(sample) else pd.Series(dtype=float)
-                pearson_ic = _daily_correlation(sample, "pearson") if len(sample) else pd.Series(dtype=float)
-                cutoff = rank_ic.index.sort_values()[int(len(rank_ic) * 0.8)] if len(rank_ic) >= 5 else None
-                oos = rank_ic[rank_ic.index >= cutoff] if cutoff is not None else pd.Series(dtype=float)
-                row = {
-                    "variant": variant_name, "universe": universe, "horizon": horizon,
-                    "observations": int(len(sample)), "days": int(sample["trade_date"].nunique()),
-                    "rank_ic": _summary(rank_ic), "pearson_ic": _summary(pearson_ic),
-                    "oos_rank_ic": _summary(oos), **_quantile_metrics(sample, config.quantile_groups),
-                    "fdr_q": None,
-                }
-                rows.append(row)
-    _fdr_bh(rows)
+        targets = build_forward_targets(merged, horizon)
+        for target_name in config.targets:
+            forward_column = f"forward_{target_name}_{horizon}"
+            merged[forward_column] = targets[target_name]
+            for universe in config.universes:
+                universe_mask = merged[f"is_{universe}"].fillna(False).astype(bool)
+                for variant_name, values in variants.items():
+                    sample = merged.loc[universe_mask, ["trade_date", forward_column]].copy()
+                    sample["factor"] = values.loc[universe_mask]
+                    sample = sample.rename(columns={forward_column: "forward_return"})
+                    sample = sample.dropna()
+                    daily_size = sample.groupby("trade_date").size()
+                    sample = sample[sample["trade_date"].isin(daily_size[daily_size >= config.min_cross_section].index)]
+                    rank_ic = _daily_correlation(sample, "spearman") if len(sample) else pd.Series(dtype=float)
+                    pearson_ic = _daily_correlation(sample, "pearson") if len(sample) else pd.Series(dtype=float)
+                    cutoff = rank_ic.index.sort_values()[int(len(rank_ic) * 0.8)] if len(rank_ic) >= 5 else None
+                    oos = rank_ic[rank_ic.index >= cutoff] if cutoff is not None else pd.Series(dtype=float)
+                    rank_summary = _summary(rank_ic)
+                    rank_summary.update(_newey_west_stats(rank_ic, max_lags=max(horizon - 1, 0)))
+                    row = {
+                        "target": target_name, "variant": variant_name,
+                        "universe": universe, "horizon": horizon,
+                        "observations": int(len(sample)), "days": int(sample["trade_date"].nunique()),
+                        "rank_ic": rank_summary, "pearson_ic": _summary(pearson_ic),
+                        "oos_rank_ic": _summary(oos), **_quantile_metrics(sample, config.quantile_groups),
+                        "fdr_q": None,
+                    }
+                    rows.append(row)
+                    for trade_date, ic in rank_ic.dropna().items():
+                        daily_records.append({
+                            "trade_date": trade_date,
+                            "target": target_name,
+                            "variant": variant_name,
+                            "universe": universe,
+                            "horizon": horizon,
+                            "rank_ic": float(ic),
+                        })
+    _fdr_bh(rows, p_value_key="nw_p_value")
+    if config.primary_gate is not None:
+        primary_gate = _evaluate_primary_gate(rows, config.primary_gate)
+        return {
+            "passed": primary_gate["passed"],
+            "gate_paths": {"primary": primary_gate["passed"], "top_tail": False},
+            "primary_gate": primary_gate,
+            "inference": "Newey-West HAC with max_lags=horizon-1; FDR is Benjamini-Hochberg across standard L1 tests",
+            "results": rows,
+            "daily_rank_ic": daily_records,
+        }
     full_path = any(
         row["rank_ic"]["mean"] is not None and row["rank_ic"]["mean"] >= 0.01
         and (row["rank_ic"]["positive_ratio"] or 0) >= 0.50 for row in rows
     )
     tail_path = any((row["top_bottom_mean"] or 0) > 0 for row in rows)
-    return {"passed": full_path or tail_path, "gate_paths": {"cross_section": full_path, "top_tail": tail_path}, "results": rows}
+    return {
+        "passed": full_path or tail_path,
+        "gate_paths": {"cross_section": full_path, "top_tail": tail_path},
+        "inference": "Newey-West HAC with max_lags=horizon-1; FDR is Benjamini-Hochberg across standard L1 tests",
+        "results": rows,
+        "daily_rank_ic": daily_records,
+    }

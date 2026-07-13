@@ -1,0 +1,71 @@
+version: 1
+name: recent_anomaly_structure_v1
+project_config: configs/project.yaml
+data_version: data_v1_20260710T115133Z_208e9fc8
+scan_summary: artifacts/market_anomaly_scans/market_scan_d629b6bbfc6423cd/scan_summary.json
+as_of_date: "2026-07-10"
+event_templates:
+  - configs/radar/price_drop_without_volume_confirmation_v1.yaml
+  - configs/radar/volume_surge_without_price_impact_v1.yaml
+  - configs/radar/high_turnover_low_displacement_v1.yaml
+  - configs/radar/long_lower_wick_strong_close_v1.yaml
+  - configs/radar/stock_industry_divergence_v1.yaml
+  - configs/radar/volatility_compression_breakout_v1.yaml
+  - configs/radar/trend_exhaustion_v1.yaml
+primary_horizon: 5
+features:
+  windows: [5, 10, 20, 60]
+  winsor_quantile: 0.01
+  cross_sectional_zscore: true
+recent_structure:
+  history_trading_days: 252
+  sequence_length: 60
+  min_valid_days: 40
+  dedup_trading_days: 5
+  efficacy_windows: [20, 60, 120]
+  minimum_mature_events: 20
+  factor_columns: [severity, ret_5d, vol_20d, turnover_rate]
+walk_forward:
+  training_days: 126
+  validation_days: 40
+  test_days: 20
+  step_days: 20
+  minimum_train_events: 1000
+  minimum_test_dates: 20
+  maximum_folds: 3
+encoder:
+  backend: torch_reference
+  d_model: 16
+  d_state: 8
+  layers: 1
+  embedding_dim: 8
+  dropout: 0.10
+  mask_probability: 0.20
+training:
+  epochs: 5
+  batch_size: 256
+  learning_rate: 0.002
+  weight_decay: 0.0001
+  patience: 3
+  validation_fraction: 0.15
+  max_train_samples: 50000
+  max_valid_samples: 20000
+  random_seeds: [17]
+  device: cpu
+  num_workers: 0
+lightgbm:
+  objective: regression
+  learning_rate: 0.03
+  num_leaves: 31
+  max_depth: -1
+  n_estimators: 300
+  subsample: 0.8
+  colsample_bytree: 0.8
+  reg_alpha: 0.1
+  reg_lambda: 0.1
+  random_state: 42
+  n_jobs: -1
+primary_metric: paired_daily_rank_ic_delta_adaptive_vs_static
+gate_min_nw_t: 2.0
+gate_min_positive_ratio: 0.50
+output_root: artifacts/recent_anomaly_structure_runs

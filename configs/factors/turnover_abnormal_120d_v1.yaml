@@ -1,0 +1,26 @@
+version: 1
+kind: factor
+factor:
+  name: turnover_abnormal_120d_v1
+  label: 换手率120日异常度
+  description: 换手率相对个股自身120日历史的滚动Z值，作为拥挤状态测量。
+  hypothesis: 极端换手会削弱异常主动流入的后续收益。
+  direction: positive
+  expected_shape: unknown
+data:
+  frequency: daily
+  required_fields: [turnover_rate]
+  lookback_days: 119
+scope: {universe: factor_eligible, cross_section: market, point_in_time_required: true, min_group_size: 10}
+calculation:
+  parameters:
+    history_window: {value: 120, robustness_neighbors: []}
+  features:
+    turnover_mean: mean(turnover_rate, history_window)
+    turnover_std: std(turnover_rate, history_window)
+  formula: clip((turnover_rate - turnover_mean) / (turnover_std + 0.000001), lower=-5.0, upper=5.0)
+  missing_policy: skip
+  winsorize: none
+  mad_scale: 5.0
+  standardize: none
+output: {value_field: factor_value}

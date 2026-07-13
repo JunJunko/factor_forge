@@ -1,0 +1,82 @@
+version: 1
+name: turnover_abs_return_discovery_v1
+project_config: configs/project.yaml
+factor_config: configs/factors/turnover_abs_return_continuation_v1.yaml
+scoring_config: configs/contracts/alpha_scoring_v1.yaml
+backtest_contract: configs/contracts/backtest_contract_v1.yaml
+data_version: data_v1_20260710T115133Z_208e9fc8
+sample_start_date: "20160104"
+sample_end_date: "20211231"
+research_mode: exploratory
+stage_l0:
+  min_coverage: 0.70
+  max_missing_rate: 0.30
+  min_daily_cross_section: 100
+  min_unique_ratio: 0.01
+  min_valid_groups_per_day: 5
+  future_data_violation: 0
+stage_l1:
+  forward_horizons: [5]
+  quantile_groups: 5
+  min_cross_section: 100
+  universes: [liquid]
+  targets: [stock_minus_sw_l1_return]
+  conditional_ic:
+    enabled: false
+    conditioning_factor: main_factor
+    quantile_groups: 5
+    min_group_size: 20
+    store_daily_ic: true
+stage_l2:
+  universes: [liquid]
+  rebalance_frequency: 1D
+  holding_periods: [5]
+  top_n: [2, 5, 10, 20]
+  weighting: equal
+  signal_time: close_t
+  entry_price: open_t1
+  overlapping_portfolios: true
+  initial_cash: 1000000
+  lot_size: 100
+  no_fill_policy: keep_cash
+  condition_filter:
+    enabled: false
+    source: stage_l1_conditional_ic
+    include_quantiles: [5]
+    min_cross_section: 100
+    benchmark: condition_equal_weight
+  execution_constraints:
+    exclude_suspended: true
+    cannot_buy_limit_up: true
+    cannot_sell_limit_down: true
+    exclude_st: true
+    exclude_delisting_period: true
+    min_listing_days: 60
+  cost_model:
+    commission_bps_per_side: 3
+    slippage_bps_per_side: 5
+    stamp_duty_bps_sell: 5
+  cost_scenarios_bps: [0, 10, 20]
+  benchmarks: [universe_equal_weight]
+stage_l3:
+  enabled: false
+  robustness_tests:
+    - year_by_year
+    - rolling_window
+    - walk_forward
+    - topn_curve
+    - holding_decay
+    - cost_sensitivity
+    - parameter_neighborhood
+    - contribution_concentration
+    - removal_of_best_trades
+    - industry_exposure
+    - size_exposure
+industry_slice:
+  enabled: false
+output:
+  store_trade_details: true
+  store_daily_positions: true
+  store_daily_factor_values: true
+  store_experiment_manifest: true
+

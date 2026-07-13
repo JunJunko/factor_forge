@@ -12,7 +12,7 @@ from dotenv import load_dotenv
 
 ENDPOINTS = [
     "stock_basic", "trade_cal", "daily", "adj_factor", "daily_basic", "stk_limit",
-    "suspend_d", "stock_st", "index_classify", "index_member_all", "index_daily",
+    "suspend_d", "stock_st", "moneyflow", "index_classify", "index_member_all", "index_daily",
     "income_vip", "balancesheet_vip",
 ]
 
@@ -49,6 +49,7 @@ class TushareProvider:
             "daily": {"trade_date": sample_date}, "adj_factor": {"trade_date": sample_date},
             "daily_basic": {"trade_date": sample_date}, "stk_limit": {"trade_date": sample_date},
             "suspend_d": {"trade_date": sample_date}, "stock_st": {"trade_date": sample_date},
+            "moneyflow": {"trade_date": sample_date},
             "index_classify": {"level": "L1", "src": "SW2021"},
             "index_member_all": {"l1_code": "801010.SI"},
             "index_daily": {"ts_code": "000852.SH", "start_date": sample_date, "end_date": sample_date},

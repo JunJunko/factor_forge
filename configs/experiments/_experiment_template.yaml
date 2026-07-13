@@ -74,6 +74,20 @@ stage_l1:
   # 预测目标；stock_return=个股收益，stock_minus_sw_l1_return=个股相对申万一级行业收益。
   targets: [stock_return]
 
+  # 可选的唯一主 Gate；声明后只允许这一行结果决定 L1 是否通过，禁止其他 variant 或尾部路径替代。
+  primary_gate: null
+  # 启用示例：
+  # primary_gate:
+  #   target: stock_return
+  #   variant: raw
+  #   universe: liquid
+  #   horizon: 5
+  #   metric: rank_ic
+  #   min_mean: 0.01
+  #   min_positive_ratio: 0.50
+  #   max_fdr_q: 0.10
+  #   allow_top_tail_fallback: false
+
   # 条件 IC：先按条件因子逐日切分样本，再在每组内计算主因子的 Rank IC。
   conditional_ic:
     # false 时不运行条件 IC，也不读取 conditioning_factor。
@@ -90,6 +104,9 @@ stage_l1:
 
     # 保存逐日、逐组 IC 明细到 l1_conditional_ic_daily.parquet。
     store_daily_ic: true
+
+    # 可选条件主 Gate；仅精确评价指定条件分位，不改变普通 L1 主 Gate。
+    primary_gate: null
 
 # L2：可交易组合回测网格及执行假设。
 stage_l2:

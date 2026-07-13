@@ -382,6 +382,26 @@ class ResearchControlStore:
             )
         return self.get_idea(idea_id)
 
+    def set_plan_status(self, plan_id: str, status: PlanStatus | str) -> ExperimentPlan:
+        """Explicitly retire a superseded pre-trial plan without consuming budget."""
+        plan = self.get_plan(plan_id)
+        target = PlanStatus(status)
+        allowed = {
+            PlanStatus.READY: {PlanStatus.CANCELLED},
+            PlanStatus.RUNNING: {PlanStatus.CANCELLED},
+            PlanStatus.COMPLETED: set(),
+            PlanStatus.CANCELLED: set(),
+        }
+        if target != plan.status and target not in allowed[plan.status]:
+            raise ResearchControlError(
+                f"invalid plan transition: {plan.status.value} -> {target.value}"
+            )
+        with self.connect() as connection:
+            connection.execute(
+                "UPDATE experiment_plan SET status=? WHERE id=?", (target.value, plan_id)
+            )
+        return self.get_plan(plan_id)
+
     def set_trial_status(self, trial_id: str, status: TrialStatus | str) -> TrialRun:
         trial = self.get_trial(trial_id)
         target = TrialStatus(status)

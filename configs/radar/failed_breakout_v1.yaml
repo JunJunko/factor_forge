@@ -1,0 +1,10 @@
+version: 1
+id: failed_breakout_v1
+kind: composite_anomaly
+description: 近期上穿历史区间后重新跌回突破边界之下的失败突破
+observation_type: relation_anomaly
+data: {required_fields: [adj_close], universe_field: is_liquid, entity_field: ts_code, date_field: trade_date, industry_field: industry_l1_code}
+scan: {discovery_window_days: 252, recent_window_days: 20}
+filters: {min_listing_days: 250, exclude_st: true, exclude_suspended: true, exclude_limit_locked: true}
+quality_gate: {min_events: 100, min_unique_stocks: 50, min_unique_industries: 10, max_industry_share: 0.40, max_single_stock_share: 0.05}
+parameters: {recipe: failed_breakout, history: {window: 252, min_periods: 120}, short_window: 5, long_window: 20, upper_percentile: 0.90, lower_percentile: 0.10, change_threshold: 0.30, min_cross_section: 20}

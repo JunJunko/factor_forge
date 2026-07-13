@@ -1,0 +1,29 @@
+version: 1
+kind: factor
+factor:
+  name: smart_flow_persistence_5d_v1
+  label: 主板异常主动流入5日持续性
+  description: 120日标准化主动净流入在最近5日的有界连续平均。
+  hypothesis: 平稳持续的异常主动流入比单日爆发具有更强的未来价格信息。
+  direction: positive
+  expected_shape: monotonic
+data:
+  frequency: daily
+  required_fields: [net_mf_amount_cny, amount]
+  lookback_days: 123
+scope: {universe: factor_eligible, cross_section: market, point_in_time_required: true, min_group_size: 10}
+calculation:
+  parameters:
+    history_window: {value: 120, robustness_neighbors: []}
+    persistence_window: {value: 5, robustness_neighbors: []}
+  features:
+    flow_ratio: net_mf_amount_cny / (amount + 1.0)
+    flow_mean: mean(flow_ratio, history_window)
+    flow_std: std(flow_ratio, history_window)
+    flow_z: clip((flow_ratio - flow_mean) / (flow_std + 0.000001), lower=-3.0, upper=3.0)
+  formula: mean(flow_z, persistence_window) / 3.0
+  missing_policy: skip
+  winsorize: none
+  mad_scale: 5.0
+  standardize: none
+output: {value_field: factor_value}

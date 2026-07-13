@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from dataclasses import dataclass
 
 import numpy as np
 import pandas as pd
@@ -16,7 +17,9 @@ from .models import (
     RadarScanResult,
 )
 from .percentiles import pit_rolling_percentile, temporal_prefix_audit
+from .concentration_features import build_turnover_residual_concentration_features
 from .templates import (
+    CompositeAnomalyTemplate,
     HighTurnoverLowDisplacementTemplate,
     LongLowerWickStrongCloseTemplate,
     LowLiquidityLargeDisplacementTemplate,
@@ -45,6 +48,18 @@ def observation_id_for(template: RadarTemplate, data_version: str, as_of_date: s
     return f"obs_{template.id}_{digest}"
 
 
+@dataclass(frozen=True)
+class RadarMeasurementResult:
+    """Dense point-in-time measurements before discovery-window card aggregation."""
+
+    frame: pd.DataFrame
+    condition_values: dict
+    measurement_fields: list[str]
+    audit_specs: list[tuple[str, int, int]]
+    duplicate_keys: int
+    as_of_date: pd.Timestamp
+
+
 class RelationAnomalyScanner:
     def scan(
         self,
@@ -54,6 +69,49 @@ class RelationAnomalyScanner:
         data_version: str,
         as_of_date: str | pd.Timestamp | None = None,
     ) -> RadarScanResult:
+        measurement = self._measure(panel, template, as_of_date=as_of_date)
+        return self._build_result(
+            measurement.frame, template, data_version=data_version,
+            as_of_date=measurement.as_of_date,
+            condition_values=measurement.condition_values,
+            measurement_fields=measurement.measurement_fields,
+            duplicate_keys=measurement.duplicate_keys,
+            audit_specs=measurement.audit_specs,
+        )
+
+    def measure_event_channels(
+        self,
+        panel: pd.DataFrame,
+        template: RadarTemplate,
+        *,
+        as_of_date: str | pd.Timestamp | None = None,
+    ) -> pd.DataFrame:
+        """Return only whitelisted, label-free dense channels for sequence models."""
+        measurement = self._measure(panel, template, as_of_date=as_of_date)
+        data = template.data
+        measured = measurement.frame
+        eligible = self._eligible(measured, template)
+        severity = pd.to_numeric(measured["severity"], errors="coerce")
+        valid = eligible & severity.notna()
+        event = valid & measured["is_event"].fillna(False).astype(bool)
+        prefix = template.id
+        return pd.DataFrame({
+            data.date_field: pd.to_datetime(measured[data.date_field]),
+            data.entity_field: measured[data.entity_field].astype(str),
+            f"{prefix}__eligible": eligible.astype("float32"),
+            f"{prefix}__event": event.astype("float32"),
+            f"{prefix}__severity": severity.where(event, 0.0).where(valid).astype("float32"),
+            f"{prefix}__valid": valid.astype("float32"),
+        }).reset_index(drop=True)
+
+    def _measure(
+        self,
+        panel: pd.DataFrame,
+        template: RadarTemplate,
+        *,
+        as_of_date: str | pd.Timestamp | None = None,
+    ) -> RadarMeasurementResult:
+        """Prepare and measure one template; shared by cards and sequence channels."""
         data = template.data
         required = set(data.required_fields) | set(filter_required_fields(template)) | {
             data.entity_field, data.date_field, data.industry_field, data.universe_field,
@@ -105,15 +163,21 @@ class RelationAnomalyScanner:
             measured, condition_values, measurement_fields, audit_specs = self._trend_exhaustion(
                 working, template
             )
+        elif isinstance(template, CompositeAnomalyTemplate):
+            measured, condition_values, measurement_fields, audit_specs = self._composite_anomaly(
+                working, template
+            )
         else:  # pragma: no cover - the discriminated template union prevents this
             raise TypeError(f"unsupported radar template: {type(template).__name__}")
 
-        result = self._build_result(
-            measured, template, data_version=data_version, as_of_date=cutoff,
-            condition_values=condition_values, measurement_fields=measurement_fields,
-            duplicate_keys=duplicate_keys, audit_specs=audit_specs,
+        return RadarMeasurementResult(
+            frame=measured,
+            condition_values=condition_values,
+            measurement_fields=measurement_fields,
+            audit_specs=audit_specs,
+            duplicate_keys=duplicate_keys,
+            as_of_date=cutoff,
         )
-        return result
 
     @staticmethod
     def _price_drop_without_volume(
@@ -541,6 +605,276 @@ class RelationAnomalyScanner:
             ("return_long", p.history.window, p.history.min_periods),
             ("return_acceleration", p.history.window, p.history.min_periods),
         ]
+
+    @staticmethod
+    def _composite_anomaly(
+        frame: pd.DataFrame, template: CompositeAnomalyTemplate
+    ) -> tuple[pd.DataFrame, dict, list[str], list[tuple[str, int, int]]]:
+        """Execute one of the frozen composite recipes without future labels."""
+        data, p = template.data, template.parameters
+        result = frame.copy()
+        entity, date, industry = data.entity_field, data.date_field, data.industry_field
+        close = pd.to_numeric(result["adj_close"], errors="coerce")
+        grouped_close = close.groupby(result[entity], sort=False)
+        result["return_1d"] = grouped_close.pct_change(1, fill_method=None)
+        result["return_short"] = grouped_close.pct_change(p.short_window, fill_method=None)
+        result["return_long"] = grouped_close.pct_change(p.long_window, fill_method=None)
+        result["abs_return_1d"] = result["return_1d"].abs()
+        eligible = RelationAnomalyScanner._eligible(result, template)
+        recipe = p.recipe
+        audits: list[tuple[str, int, int]] = []
+        measurements: list[str] = []
+
+        def pit(source: str, output: str, window=None, min_periods=None):
+            window = window or p.history.window
+            min_periods = min_periods or p.history.min_periods
+            result[output] = pit_rolling_percentile(
+                result, source, entity_column=entity, date_column=date,
+                window=window, min_periods=min_periods,
+            )
+            audits.append((source, window, min_periods))
+
+        if recipe == "turnover_residual_concentration":
+            result = build_turnover_residual_concentration_features(
+                result,
+                universe_field=data.universe_field,
+                liquidity_window=p.long_window,
+                liquidity_min_periods=p.liquidity_min_periods,
+                history_window=p.history.window,
+                history_min_periods=p.history.min_periods,
+                persistence_window=p.short_window,
+                contributor_percentile=p.upper_percentile,
+                concentration_percentile=p.upper_percentile,
+                min_cross_section=p.min_cross_section,
+            )
+            event = (
+                result["is_residual_contributor"]
+                & result["residual_concentration_history_percentile"].ge(p.upper_percentile)
+            )
+            result["severity"] = (
+                result["amount_residual_cross_section_percentile"] - p.upper_percentile
+                + result["residual_concentration_history_percentile"] - p.upper_percentile
+            ).clip(lower=0)
+            measurements = [
+                "top5_positive_amount_residual_mass_share",
+                "residual_concentration_history_percentile",
+                "amount_residual_cross_section_percentile",
+                "industry_residual_mass_hhi",
+                "top_size_decile_residual_mass_share",
+                "contributor_return_sign_coherence",
+                "contributor_volume_price_efficiency",
+                "residual_concentration_persistence_5d",
+                "severity",
+            ]
+            audits.append((
+                "top5_positive_amount_residual_mass_share",
+                p.history.window,
+                p.history.min_periods,
+            ))
+
+        elif recipe == "index_up_breadth_down":
+            amount = pd.to_numeric(result["amount_cny"], errors="coerce").clip(lower=0)
+            result["return_contribution_proxy"] = result["return_short"] * amount
+            result["contribution_percentile"] = result.groupby(date)[
+                "return_contribution_proxy"
+            ].rank(pct=True)
+            daily = result.groupby(date, sort=True).agg(
+                market_return_short=("return_short", "median"),
+                advancing_ratio=("return_1d", lambda x: float(x.gt(0).mean())),
+            )
+            daily["breadth_change"] = daily["advancing_ratio"].diff(p.short_window)
+            result = result.join(daily, on=date)
+            pit("market_return_short", "market_return_percentile")
+            event = (
+                result["market_return_percentile"].ge(p.upper_percentile)
+                & result["breadth_change"].le(-p.change_threshold)
+                & result["contribution_percentile"].ge(0.90)
+            )
+            result["severity"] = (
+                result["market_return_percentile"] - p.upper_percentile
+                + (-result["breadth_change"] - p.change_threshold)
+            ).clip(lower=0)
+            measurements = ["market_return_short", "advancing_ratio", "breadth_change",
+                            "return_contribution_proxy", "contribution_percentile",
+                            "market_return_percentile", "severity"]
+
+        elif recipe == "turnover_concentration":
+            amount = pd.to_numeric(result["amount_cny"], errors="coerce").clip(lower=0)
+            result["amount_value"] = amount
+            result["amount_cross_section_percentile"] = result.groupby(date)["amount_value"].rank(pct=True)
+            top_amount = amount.where(result["amount_cross_section_percentile"].ge(0.95), 0.0)
+            totals = amount.groupby(result[date]).transform("sum").replace(0, np.nan)
+            result["top5_amount_share"] = top_amount.groupby(result[date]).transform("sum") / totals
+            pit("top5_amount_share", "concentration_history_percentile")
+            event = (
+                result["concentration_history_percentile"].ge(p.upper_percentile)
+                & result["amount_cross_section_percentile"].ge(0.95)
+            )
+            result["severity"] = (
+                result["concentration_history_percentile"] - p.upper_percentile
+                + result["amount_cross_section_percentile"] - 0.95
+            ).clip(lower=0)
+            measurements = ["amount_value", "amount_cross_section_percentile", "top5_amount_share",
+                            "concentration_history_percentile", "severity"]
+
+        elif recipe == "turnover_displacement_close_context":
+            result["turnover_value"] = pd.to_numeric(result["turnover_rate"], errors="coerce")
+            high = pd.to_numeric(result["adj_high"], errors="coerce")
+            low = pd.to_numeric(result["adj_low"], errors="coerce")
+            result["close_position"] = (close - low) / (high - low).replace(0, np.nan)
+            pit("turnover_value", "turnover_percentile")
+            pit("abs_return_1d", "displacement_percentile")
+            event = result["turnover_percentile"].ge(p.upper_percentile) & result[
+                "displacement_percentile"
+            ].le(p.lower_percentile)
+            result["event_subtype"] = np.where(
+                result["close_position"].ge(0.7), "strong_close_absorption", "weak_close_pressure"
+            )
+            result["severity"] = (
+                result["turnover_percentile"] - p.upper_percentile
+                + p.lower_percentile - result["displacement_percentile"]
+            ).clip(lower=0)
+            measurements = ["turnover_value", "abs_return_1d", "close_position",
+                            "turnover_percentile", "displacement_percentile", "event_subtype", "severity"]
+
+        elif recipe == "enhanced_stock_industry_residual":
+            daily_return = result["return_1d"]
+            result["volatility"] = daily_return.groupby(result[entity], sort=False).transform(
+                lambda x: x.rolling(p.long_window, min_periods=max(5, p.long_window // 2)).std(ddof=0)
+            )
+            result["enhanced_industry_residual"] = RelationAnomalyScanner._daily_residual(
+                result, "return_short", ["log_total_mv", "volatility"],
+                p.min_cross_section, [date, industry],
+            )
+            result["residual_cross_section_percentile"] = result.groupby(
+                [date, industry], dropna=False
+            )["enhanced_industry_residual"].rank(pct=True)
+            upper = result["residual_cross_section_percentile"].ge(p.upper_percentile)
+            lower = result["residual_cross_section_percentile"].le(p.lower_percentile)
+            event = upper | lower
+            result["event_subtype"] = np.select([upper, lower], ["positive_residual", "negative_residual"], default="none")
+            result["severity"] = np.maximum(
+                result["residual_cross_section_percentile"] - p.upper_percentile,
+                p.lower_percentile - result["residual_cross_section_percentile"],
+            ).clip(lower=0)
+            measurements = ["return_short", "volatility", "enhanced_industry_residual",
+                            "residual_cross_section_percentile", "event_subtype", "severity"]
+
+        elif recipe == "price_volume_conditional_residual":
+            result["log_volume"] = np.log1p(pd.to_numeric(result["volume_shares"], errors="coerce").clip(lower=0))
+            result["volume_conditional_residual"] = RelationAnomalyScanner._daily_residual(
+                result, "log_volume", ["abs_return_1d", "log_total_mv"],
+                p.min_cross_section, [date],
+            )
+            pit("abs_return_1d", "price_change_percentile")
+            pit("volume_conditional_residual", "volume_residual_percentile")
+            low_confirmation = result["price_change_percentile"].ge(p.upper_percentile) & result[
+                "volume_residual_percentile"
+            ].le(p.lower_percentile)
+            high_churn = result["price_change_percentile"].le(p.lower_percentile) & result[
+                "volume_residual_percentile"
+            ].ge(p.upper_percentile)
+            event = low_confirmation | high_churn
+            result["event_subtype"] = np.select(
+                [low_confirmation, high_churn], ["large_move_low_volume_residual", "high_volume_low_displacement"], default="none"
+            )
+            result["severity"] = np.maximum(
+                result["price_change_percentile"] - result["volume_residual_percentile"],
+                result["volume_residual_percentile"] - result["price_change_percentile"],
+            ).clip(lower=0)
+            measurements = ["abs_return_1d", "log_volume", "volume_conditional_residual",
+                            "price_change_percentile", "volume_residual_percentile", "event_subtype", "severity"]
+
+        elif recipe == "leader_industry_median_decoupling":
+            result["size_rank_in_industry"] = result.groupby([date, industry])["log_total_mv"].rank(pct=True)
+            result["industry_median_return"] = result.groupby([date, industry])["return_short"].transform("median")
+            result["leader_median_gap"] = result["return_short"] - result["industry_median_return"]
+            result["industry_advancing_ratio"] = result["return_1d"].gt(0).groupby(
+                [result[date], result[industry]]
+            ).transform("mean")
+            pit("leader_median_gap", "leader_gap_percentile")
+            event = (
+                result["size_rank_in_industry"].ge(0.90)
+                & result["leader_gap_percentile"].ge(p.upper_percentile)
+                & result["industry_advancing_ratio"].le(0.50 - p.change_threshold / 2)
+            )
+            result["severity"] = (
+                result["leader_gap_percentile"] - p.upper_percentile
+                + (0.50 - result["industry_advancing_ratio"])
+            ).clip(lower=0)
+            measurements = ["return_short", "industry_median_return", "leader_median_gap",
+                            "size_rank_in_industry", "industry_advancing_ratio", "leader_gap_percentile", "severity"]
+
+        elif recipe == "failed_breakout":
+            prior_high = close.groupby(result[entity], sort=False).transform(
+                lambda x: x.shift(1).rolling(p.long_window, min_periods=p.long_window).max()
+            )
+            result["breakout_strength"] = close / prior_high - 1
+            result["recent_breakout_strength"] = result["breakout_strength"].groupby(
+                result[entity], sort=False
+            ).transform(lambda x: x.shift(1).rolling(p.short_window, min_periods=1).max())
+            result["fallback_depth"] = close / prior_high - 1
+            event = result["recent_breakout_strength"].gt(0) & result["fallback_depth"].lt(0)
+            result["severity"] = (-result["fallback_depth"] + result["recent_breakout_strength"]).clip(lower=0)
+            measurements = ["breakout_strength", "recent_breakout_strength", "fallback_depth", "severity"]
+
+        elif recipe == "momentum_participation_deterioration":
+            positive = result["return_1d"].gt(0).astype(float)
+            result["positive_day_ratio"] = positive.groupby(result[entity], sort=False).transform(
+                lambda x: x.rolling(p.long_window, min_periods=p.long_window).mean()
+            )
+            result["participation_change"] = result["positive_day_ratio"] - result[
+                "positive_day_ratio"
+            ].groupby(result[entity], sort=False).shift(p.short_window)
+            pit("return_long", "momentum_percentile")
+            event = result["momentum_percentile"].ge(p.upper_percentile) & result[
+                "participation_change"
+            ].le(-p.change_threshold)
+            result["severity"] = (
+                result["momentum_percentile"] - p.upper_percentile
+                + (-result["participation_change"] - p.change_threshold)
+            ).clip(lower=0)
+            measurements = ["return_long", "positive_day_ratio", "participation_change",
+                            "momentum_percentile", "severity"]
+
+        elif recipe == "percentile_rapid_migration":
+            high = pd.to_numeric(result["adj_high"], errors="coerce")
+            low = pd.to_numeric(result["adj_low"], errors="coerce")
+            previous = grouped_close.shift(1)
+            true_range = pd.concat([high - low, (high - previous).abs(), (low - previous).abs()], axis=1).max(axis=1)
+            result["normalized_atr"] = true_range.groupby(result[entity], sort=False).transform(
+                lambda x: x.rolling(p.long_window, min_periods=p.long_window).mean()
+            ) / close
+            pit("normalized_atr", "atr_percentile")
+            result["percentile_velocity"] = result["atr_percentile"] - result[
+                "atr_percentile"
+            ].groupby(result[entity], sort=False).shift(p.short_window)
+            event = result["percentile_velocity"].abs().ge(p.change_threshold)
+            result["event_subtype"] = np.where(result["percentile_velocity"].ge(0), "rapid_rise", "rapid_fall")
+            result["severity"] = (result["percentile_velocity"].abs() - p.change_threshold).clip(lower=0)
+            measurements = ["normalized_atr", "atr_percentile", "percentile_velocity", "event_subtype", "severity"]
+
+        else:  # short_long_percentile_conflict
+            result["amount_value"] = pd.to_numeric(result["amount_cny"], errors="coerce")
+            short_history = max(20, p.short_window * 12)
+            short_min = max(10, short_history // 2)
+            pit("amount_value", "short_amount_percentile", short_history, short_min)
+            pit("amount_value", "long_amount_percentile")
+            result["short_long_percentile_gap"] = result["short_amount_percentile"] - result["long_amount_percentile"]
+            event = result["short_long_percentile_gap"].abs().ge(p.change_threshold)
+            result["event_subtype"] = np.where(result["short_long_percentile_gap"].ge(0), "recent_only_extreme", "long_term_only_extreme")
+            result["severity"] = (result["short_long_percentile_gap"].abs() - p.change_threshold).clip(lower=0)
+            measurements = ["amount_value", "short_amount_percentile", "long_amount_percentile",
+                            "short_long_percentile_gap", "event_subtype", "severity"]
+
+        result["is_event"] = eligible & event.fillna(False)
+        return result, {
+            "recipe": recipe,
+            "upper_percentile": p.upper_percentile,
+            "lower_percentile": p.lower_percentile,
+            "change_threshold": p.change_threshold,
+            "strict_prior_history": "true",
+        }, measurements, audits
 
     @staticmethod
     def _eligible(frame: pd.DataFrame, template: RadarTemplate) -> pd.Series:

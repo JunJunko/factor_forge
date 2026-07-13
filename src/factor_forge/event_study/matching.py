@@ -34,6 +34,84 @@ def match_all_stages(
     return output
 
 
+def match_episode_anchors(
+    data: pd.DataFrame,
+    config: MatchingConfig,
+    horizons: list[int],
+) -> pd.DataFrame:
+    """Match deduped episode anchors while excluding every raw same-template trigger.
+
+    Unlike the Phase-3 compatibility matcher, maturity is applied before neighbor
+    selection so an episode receives up to ``neighbors`` mature controls per horizon.
+    """
+    required = {"is_raw_event", "is_episode_anchor", *MATCHING_CONTROLS}
+    missing = required - set(data.columns)
+    if missing:
+        raise KeyError(f"episode matching data missing columns: {sorted(missing)}")
+    stage = config.stages[-1]
+    rows: list[dict] = []
+    event_dates = data.loc[data["is_episode_anchor"], "trade_date"].unique()
+    candidates = data.loc[
+        data["trade_date"].isin(event_dates)
+        & data["is_liquid"].fillna(False).astype(bool)
+    ].copy()
+    for (trade_date, industry), group in candidates.groupby(
+        ["trade_date", "industry_l1_code"], dropna=False, sort=True
+    ):
+        if pd.isna(industry):
+            continue
+        events = group.loc[group["is_episode_anchor"]].copy()
+        controls_base = group.loc[~group["is_raw_event"]].copy()
+        if events.empty or controls_base.empty:
+            continue
+        centers, scales = _robust_location_scale(group, stage.controls)
+        for horizon in horizons:
+            event_return = f"forward_return_{horizon}"
+            mature = f"label_mature_{horizon}"
+            controls = controls_base.loc[
+                controls_base[mature].fillna(False).astype(bool)
+            ].dropna(subset=[*stage.controls, event_return])
+            if controls.empty:
+                continue
+            lookup = controls.set_index("ts_code", drop=False)
+            for event in events.itertuples(index=False):
+                item = event._asdict()
+                if (
+                    not bool(item.get(mature, False))
+                    or pd.isna(item.get(event_return))
+                    or any(pd.isna(item.get(field)) for field in stage.controls)
+                ):
+                    continue
+                selected = _select_controls(
+                    item, controls, stage.controls, centers, scales,
+                    config.neighbors, config.caliper, trade_date,
+                )
+                for control_code, distance in selected:
+                    control = lookup.loc[control_code]
+                    if isinstance(control, pd.DataFrame):
+                        control = control.iloc[0]
+                    rows.append({
+                        "trade_date": pd.Timestamp(trade_date),
+                        "industry_l1_code": industry,
+                        "event_code": str(item["ts_code"]),
+                        "control_code": str(control_code),
+                        "horizon": int(horizon),
+                        "match_distance": float(distance),
+                        "severity": float(item["severity"]),
+                        "event_return": float(item[event_return]),
+                        "control_return": float(control[event_return]),
+                        **{
+                            f"event_{field}": item.get(field)
+                            for field in MATCHING_CONTROLS
+                        },
+                        **{
+                            f"control_{field}": control.get(field)
+                            for field in MATCHING_CONTROLS
+                        },
+                    })
+    return pd.DataFrame(rows)
+
+
 def _match_stage(
     candidates: pd.DataFrame,
     stage: MatchStage,

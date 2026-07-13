@@ -1,0 +1,23 @@
+version: 1
+kind: factor
+factor:
+  name: close_location_1d_v1
+  label: 日内收盘位置
+  description: 复权收盘价在当日高低区间中的连续位置。
+  hypothesis: 收盘接近高位表示当日买盘影响较少被回吐。
+  direction: positive
+  expected_shape: monotonic
+data:
+  frequency: daily
+  required_fields: [high, low, close]
+  lookback_days: 0
+scope: {universe: factor_eligible, cross_section: market, point_in_time_required: true, min_group_size: 10}
+calculation:
+  parameters: {}
+  features: {}
+  formula: clip((close - low) / (high - low + 0.000001), lower=0.0, upper=1.0)
+  missing_policy: skip
+  winsorize: none
+  mad_scale: 5.0
+  standardize: none
+output: {value_field: factor_value}

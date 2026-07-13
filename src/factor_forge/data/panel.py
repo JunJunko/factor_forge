@@ -26,6 +26,10 @@ class DailyPanelBuilder:
 
     def build(self, datasets: dict[str, pd.DataFrame]) -> pd.DataFrame:
         daily = _dates(datasets["daily"], ["trade_date"])
+        securities = datasets.get("stock_basic", pd.DataFrame())
+        if not securities.empty and "ts_code" in securities:
+            allowed_codes = set(securities["ts_code"].dropna().astype(str))
+            daily = daily.loc[daily["ts_code"].astype(str).isin(allowed_codes)].copy()
         daily = daily.rename(columns={
             "open": "raw_open", "high": "raw_high", "low": "raw_low",
             "close": "raw_close", "vol": "source_volume_hands",
@@ -34,6 +38,8 @@ class DailyPanelBuilder:
         suspensions = _dates(datasets.get("suspend", pd.DataFrame()), ["trade_date"])
         if not suspensions.empty:
             keys = suspensions[["trade_date", "ts_code"]].drop_duplicates()
+            if not securities.empty and "ts_code" in securities:
+                keys = keys.loc[keys["ts_code"].astype(str).isin(allowed_codes)]
             base = pd.concat([daily, keys], ignore_index=True).drop_duplicates(
                 ["trade_date", "ts_code"], keep="first"
             )
@@ -49,6 +55,30 @@ class DailyPanelBuilder:
         if not basic.empty:
             keep = [c for c in ["trade_date", "ts_code", "total_mv", "circ_mv", "turnover_rate"] if c in basic]
             panel = panel.merge(basic[keep], on=["trade_date", "ts_code"], how="left")
+        moneyflow = _dates(datasets.get("moneyflow", pd.DataFrame()), ["trade_date"])
+        if not moneyflow.empty:
+            source_flow_columns = [
+                "net_mf_amount", "buy_sm_amount", "sell_sm_amount",
+                "buy_lg_amount", "sell_lg_amount", "buy_elg_amount", "sell_elg_amount",
+            ]
+            moneyflow = moneyflow.reindex(columns=["trade_date", "ts_code", *source_flow_columns])
+            for column in source_flow_columns:
+                moneyflow[f"{column}_cny"] = (
+                    pd.to_numeric(moneyflow[column], errors="coerce") * 10_000.0
+                )
+            flow_columns = [f"{column}_cny" for column in source_flow_columns]
+            panel = panel.merge(
+                moneyflow[["trade_date", "ts_code", *flow_columns]],
+                on=["trade_date", "ts_code"], how="left",
+            )
+        else:
+            flow_columns = [
+                "net_mf_amount_cny", "buy_sm_amount_cny", "sell_sm_amount_cny",
+                "buy_lg_amount_cny", "sell_lg_amount_cny", "buy_elg_amount_cny",
+                "sell_elg_amount_cny",
+            ]
+            for column in flow_columns:
+                panel[column] = np.nan
         limits = _dates(datasets.get("stk_limit", pd.DataFrame()), ["trade_date"])
         if not limits.empty:
             limits = limits.rename(columns={"up_limit": "limit_up_price", "down_limit": "limit_down_price"})
@@ -108,6 +138,9 @@ class DailyPanelBuilder:
             "trade_date", "ts_code", "raw_open", "raw_high", "raw_low", "raw_close", "pre_close",
             "adj_factor", "adj_open", "adj_high", "adj_low", "adj_close", "volume_shares", "amount_cny",
             "pct_change", "total_mv_cny", "circ_mv_cny", "log_total_mv", "log_circ_mv", "turnover_rate",
+            "net_mf_amount_cny", "buy_sm_amount_cny", "sell_sm_amount_cny",
+            "buy_lg_amount_cny", "sell_lg_amount_cny", "buy_elg_amount_cny",
+            "sell_elg_amount_cny",
             *industry_columns, "limit_up_price", "limit_down_price", "is_suspended",
             "is_limit_up_open", "is_limit_down_open", "is_st", "is_delisting_period", "listing_trade_days",
             "is_factor_eligible", "is_tradeable", "is_liquid", "st_status_known",

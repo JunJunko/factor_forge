@@ -1,0 +1,36 @@
+version: 1
+kind: factor
+factor:
+  name: turnover_abs_return_continuation_industry_v3
+  label: Industry turnover displacement continuation V3
+  description: Same turnover-displacement score, standardized within PIT SW L1 industries over the factor-eligible universe.
+  hypothesis: Material loss of five-day industry-relative Rank IC after industry-within standardization supports the cross-sectional-composition explanation.
+  direction: positive
+  expected_shape: monotonic
+data:
+  frequency: daily
+  required_fields: [close, turnover_rate, industry_l1_code]
+  lookback_days: 1
+scope:
+  universe: factor_eligible
+  cross_section: industry
+  group_field: industry_l1_code
+  industry_standard: SW2021
+  industry_level: L1
+  point_in_time_required: true
+  min_group_size: 10
+calculation:
+  parameters: {}
+  features:
+    ret_1d: ret(close, 1)
+    industry_ret_1d: group_mean(ret_1d, by=industry_l1_code)
+    relative_ret_1d: ret_1d - industry_ret_1d
+    turnover_score: cs_zscore(turnover_rate, by=industry_l1_code)
+    displacement_score: cs_zscore(abs(relative_ret_1d), by=industry_l1_code)
+    absorption_gap: turnover_score - displacement_score
+  formula: where(relative_ret_1d >= 0, absorption_gap, -absorption_gap)
+  missing_policy: skip
+  winsorize: mad
+  mad_scale: 5.0
+  standardize: zscore
+output: {value_field: factor_value}

@@ -21,7 +21,7 @@ from .runner import RadarRunner
 from .models import ObservationCard
 
 
-BATCH_IMPLEMENTATION_VERSION = 3
+BATCH_IMPLEMENTATION_VERSION = 4
 
 
 class FreshnessConfig(BaseModel):
@@ -42,8 +42,11 @@ class MarketScanConfig(BaseModel):
     version: int = 1
     name: str
     project_config: Path = Path("configs/project.yaml")
-    event_templates: list[Path] = Field(min_length=8, max_length=8)
-    drift_templates: list[Path] = Field(min_length=2, max_length=2)
+    event_templates: list[Path] = Field(default_factory=list, min_length=1)
+    drift_templates: list[Path] = Field(default_factory=list, min_length=1)
+    event_template_globs: list[str] = Field(default_factory=list)
+    drift_template_globs: list[str] = Field(default_factory=list)
+    template_excludes: list[str] = Field(default_factory=list)
     event_output_root: Path = Path("artifacts/radar_observations")
     drift_output_root: Path = Path("artifacts/radar_drifts")
     output_root: Path = Path("artifacts/market_anomaly_scans")
@@ -53,8 +56,50 @@ class MarketScanConfig(BaseModel):
 
 
 def load_market_scan_config(path: str | Path) -> MarketScanConfig:
-    with Path(path).open("r", encoding="utf-8") as handle:
-        return MarketScanConfig.model_validate(yaml.safe_load(handle))
+    config_path = Path(path).resolve()
+    with config_path.open("r", encoding="utf-8") as handle:
+        payload = yaml.safe_load(handle)
+    workspace = next(
+        (parent for parent in [config_path.parent, *config_path.parents] if (parent / "pyproject.toml").exists()),
+        Path.cwd(),
+    )
+    excludes = set(payload.get("template_excludes", []))
+
+    def discover(explicit_key: str, glob_key: str) -> list[Path]:
+        candidates = [workspace / item for item in payload.get(explicit_key, [])]
+        for pattern in payload.get(glob_key, []):
+            candidates.extend(workspace.glob(pattern))
+        unique = {}
+        for candidate in candidates:
+            resolved = candidate.resolve()
+            relative = resolved.relative_to(workspace).as_posix() if resolved.is_relative_to(workspace) else resolved.as_posix()
+            if candidate.name in excludes or relative in excludes:
+                continue
+            unique[resolved.as_posix()] = resolved
+        return [unique[key] for key in sorted(unique)]
+
+    payload["event_templates"] = discover("event_templates", "event_template_globs")
+    payload["drift_templates"] = discover("drift_templates", "drift_template_globs")
+    config = MarketScanConfig.model_validate(payload)
+    _validate_discovered_templates(config)
+    return config
+
+
+def _validate_discovered_templates(config: MarketScanConfig) -> None:
+    from .drift_templates import load_drift_template
+    from .templates import load_radar_template
+
+    groups = [
+        ("event", [load_radar_template(path) for path in config.event_templates]),
+        ("drift", [load_drift_template(path) for path in config.drift_templates]),
+    ]
+    for label, templates in groups:
+        ids = [template.id for template in templates]
+        hashes = [template.definition_hash() for template in templates]
+        if len(ids) != len(set(ids)):
+            raise ValueError(f"duplicate discovered {label} template id")
+        if len(hashes) != len(set(hashes)):
+            raise ValueError(f"duplicate discovered {label} template definition")
 
 
 class MarketAnomalyScanRunner:

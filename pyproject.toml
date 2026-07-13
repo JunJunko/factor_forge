@@ -22,6 +22,7 @@ dependencies = [
 tushare = ["tushare>=1.4"]
 test = ["pytest>=8", "pytest-cov>=5"]
 ml = ["lightgbm>=4.3,<5", "scikit-learn>=1.4", "hmmlearn>=0.3.3,<0.4"]
+mamba = ["torch>=2.3,<3", "einops>=0.8,<1"]
 # pyqlib does not publish wheels for every Windows/Python combination.  Keep it
 # separate so the core project and the native LightGBM runner remain installable.
 qlib = ["pyqlib==0.9.7", "numpy>=1.26,<2"]

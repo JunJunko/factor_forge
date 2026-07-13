@@ -9,7 +9,7 @@ from conftest import make_panel
 from factor_forge.radar.models import ObservationCard
 from factor_forge.radar.batch import MarketAnomalyScanRunner, load_market_scan_config
 from factor_forge.radar.scanner import RelationAnomalyScanner
-from factor_forge.radar.templates import load_radar_template
+from factor_forge.radar.templates import CompositeAnomalyTemplate, load_radar_template
 
 
 EVENT_TEMPLATE_PATHS = sorted(
@@ -18,17 +18,19 @@ EVENT_TEMPLATE_PATHS = sorted(
 )
 
 
-def test_repository_contains_exactly_eight_frozen_event_templates():
-    assert len(EVENT_TEMPLATE_PATHS) == 8
+def test_repository_contains_eighteen_frozen_event_templates():
+    assert len(EVENT_TEMPLATE_PATHS) == 18
     templates = [load_radar_template(path) for path in EVENT_TEMPLATE_PATHS]
-    assert len({template.id for template in templates}) == 8
-    assert len({template.kind for template in templates}) == 8
-    assert len({template.definition_hash() for template in templates}) == 8
+    assert len({template.id for template in templates}) == 18
+    assert len({template.definition_hash() for template in templates}) == 18
+    composites = [template for template in templates if isinstance(template, CompositeAnomalyTemplate)]
+    assert len(composites) == 10
+    assert len({template.parameters.recipe for template in composites}) == 10
 
 
-def test_latest_bundle_contains_exactly_eight_events_and_two_drifts():
+def test_latest_bundle_dynamically_discovers_all_events_and_drifts():
     config = load_market_scan_config("configs/radar/latest_market_scan_v1.yaml")
-    assert len(config.event_templates) == 8
+    assert len(config.event_templates) == len(EVENT_TEMPLATE_PATHS) == 18
     assert len(config.drift_templates) == 2
     assert all(path.exists() for path in [*config.event_templates, *config.drift_templates])
 

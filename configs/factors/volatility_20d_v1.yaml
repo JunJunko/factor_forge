@@ -1,0 +1,24 @@
+version: 1
+kind: factor
+factor:
+  name: volatility_20d_v1
+  label: 20日实现波动率
+  description: 最近20日个股日收益总体标准差。
+  hypothesis: 高波动会机械地产生更极端的资金异常和收益，应作为风险控制。
+  direction: positive
+  expected_shape: unknown
+data:
+  frequency: daily
+  required_fields: [close]
+  lookback_days: 20
+scope: {universe: factor_eligible, cross_section: market, point_in_time_required: true, min_group_size: 10}
+calculation:
+  parameters: {}
+  features:
+    return_1d: ret(close, 1)
+  formula: std(return_1d, 20)
+  missing_policy: skip
+  winsorize: mad
+  mad_scale: 5.0
+  standardize: zscore
+output: {value_field: factor_value}

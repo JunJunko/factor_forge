@@ -1,0 +1,27 @@
+version: 1
+kind: factor
+factor:
+  name: smart_flow_abnormal_120d_v1
+  label: 主板主动净流入120日异常度
+  description: 主动净流入占成交额比例相对个股自身120日历史的滚动Z值。
+  hypothesis: 对个股自身异常的主动净流入比绝对净流入金额包含更多增量信息。
+  direction: positive
+  expected_shape: monotonic
+data:
+  frequency: daily
+  required_fields: [net_mf_amount_cny, amount]
+  lookback_days: 119
+scope: {universe: factor_eligible, cross_section: market, point_in_time_required: true, min_group_size: 10}
+calculation:
+  parameters:
+    history_window: {value: 120, robustness_neighbors: []}
+  features:
+    flow_ratio: net_mf_amount_cny / (amount + 1.0)
+    flow_mean: mean(flow_ratio, history_window)
+    flow_std: std(flow_ratio, history_window)
+  formula: clip((flow_ratio - flow_mean) / (flow_std + 0.000001), lower=-5.0, upper=5.0)
+  missing_policy: skip
+  winsorize: none
+  mad_scale: 5.0
+  standardize: none
+output: {value_field: factor_value}

@@ -1,0 +1,31 @@
+version: 1
+kind: factor
+factor:
+  name: smart_flow_price_acceptance_interaction_v1
+  label: 异常主动流入与价格接受交互
+  description: 120日主动资金异常度与同日行业相对收益的连续乘积。
+  hypothesis: 异常主动流入获得行业相对价格确认时，未来收益增量更强。
+  direction: positive
+  expected_shape: monotonic
+data:
+  frequency: daily
+  required_fields: [net_mf_amount_cny, amount, close, industry]
+  lookback_days: 119
+scope: {universe: factor_eligible, cross_section: market, point_in_time_required: true, min_group_size: 10}
+calculation:
+  parameters:
+    history_window: {value: 120, robustness_neighbors: []}
+  features:
+    flow_ratio: net_mf_amount_cny / (amount + 1.0)
+    flow_mean: mean(flow_ratio, history_window)
+    flow_std: std(flow_ratio, history_window)
+    flow_z: clip((flow_ratio - flow_mean) / (flow_std + 0.000001), lower=-5.0, upper=5.0)
+    stock_return_1d: ret(close, 1)
+    industry_return_1d: group_mean(stock_return_1d, by=industry)
+    price_acceptance: stock_return_1d - industry_return_1d
+  formula: flow_z * price_acceptance
+  missing_policy: skip
+  winsorize: mad
+  mad_scale: 5.0
+  standardize: zscore
+output: {value_field: factor_value}

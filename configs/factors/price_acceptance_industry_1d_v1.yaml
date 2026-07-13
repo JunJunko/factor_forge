@@ -1,0 +1,25 @@
+version: 1
+kind: factor
+factor:
+  name: price_acceptance_industry_1d_v1
+  label: 当日行业相对价格接受
+  description: 当日个股收益减去PIT申万一级行业平均收益。
+  hypothesis: 主动流入获得独立于行业共同运动的同日价格确认时更可能反映价格发现。
+  direction: positive
+  expected_shape: monotonic
+data:
+  frequency: daily
+  required_fields: [close, industry]
+  lookback_days: 1
+scope: {universe: factor_eligible, cross_section: market, point_in_time_required: true, min_group_size: 10}
+calculation:
+  parameters: {}
+  features:
+    stock_return_1d: ret(close, 1)
+    industry_return_1d: group_mean(stock_return_1d, by=industry)
+  formula: stock_return_1d - industry_return_1d
+  missing_policy: skip
+  winsorize: mad
+  mad_scale: 5.0
+  standardize: zscore
+output: {value_field: factor_value}

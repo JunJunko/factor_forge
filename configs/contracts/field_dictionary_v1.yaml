@@ -14,6 +14,13 @@ fields:
   adj_close: {type: float64, nullable: true, formula: raw_close_times_adj_factor}
   volume_shares: {type: float64, nullable: true, unit: shares, source_conversion: vol_times_100}
   amount_cny: {type: float64, nullable: true, unit: CNY, source_conversion: amount_times_1000}
+  net_mf_amount_cny: {type: float64, nullable: true, unit: CNY, source_conversion: net_mf_amount_times_10000, available_time: T_CLOSE, source: tushare_moneyflow}
+  buy_sm_amount_cny: {type: float64, nullable: true, unit: CNY, source_conversion: buy_sm_amount_times_10000, available_time: T_CLOSE, source: tushare_moneyflow}
+  sell_sm_amount_cny: {type: float64, nullable: true, unit: CNY, source_conversion: sell_sm_amount_times_10000, available_time: T_CLOSE, source: tushare_moneyflow}
+  buy_lg_amount_cny: {type: float64, nullable: true, unit: CNY, source_conversion: buy_lg_amount_times_10000, available_time: T_CLOSE, source: tushare_moneyflow}
+  sell_lg_amount_cny: {type: float64, nullable: true, unit: CNY, source_conversion: sell_lg_amount_times_10000, available_time: T_CLOSE, source: tushare_moneyflow}
+  buy_elg_amount_cny: {type: float64, nullable: true, unit: CNY, source_conversion: buy_elg_amount_times_10000, available_time: T_CLOSE, source: tushare_moneyflow}
+  sell_elg_amount_cny: {type: float64, nullable: true, unit: CNY, source_conversion: sell_elg_amount_times_10000, available_time: T_CLOSE, source: tushare_moneyflow}
   pct_change: {type: float64, nullable: true, unit: percent}
   total_mv_cny: {type: float64, nullable: true, unit: CNY, source_conversion: total_mv_times_10000}
   circ_mv_cny: {type: float64, nullable: true, unit: CNY, source_conversion: circ_mv_times_10000}

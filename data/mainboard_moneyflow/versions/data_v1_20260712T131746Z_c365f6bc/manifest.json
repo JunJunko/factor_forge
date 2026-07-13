@@ -1,0 +1,16 @@
+{
+  "data_version": "data_v1_20260712T131746Z_c365f6bc",
+  "contract_version": "1.0.0",
+  "created_at": "2026-07-12T13:17:46.079364+00:00",
+  "start_date": "2016-01-04",
+  "end_date": "2021-12-31",
+  "row_count": 4056532,
+  "source": "tushare_moneyflow_enriched_from_data_v1_20260710T115133Z_208e9fc8",
+  "version_kind": "complete",
+  "files": {
+    "curated/stock_daily_panel.parquet": "c3397386b3a94e7a3d8dbdef818f80a36d75298f198a71efac01b2728742730c",
+    "raw/tushare_moneyflow_enriched_from_data_v1_20260710T115133Z_208e9fc8/moneyflow.parquet": "975aafdd8d713f429263aeef9189f92294f97c165b551c1203a870c5a269cfb6",
+    "raw/tushare_moneyflow_enriched_from_data_v1_20260710T115133Z_208e9fc8/stock_basic.parquet": "1db0f5dae0b13f7eb9548fc880580a208459e41084a4b542cb83685a8057d975"
+  },
+  "quality_issues": []
+}

@@ -1,6 +1,6 @@
 # Latest market anomaly scan
 
-The market anomaly scan is a discovery-only bundle over eight frozen stock-event templates and two frozen market relationship-drift templates.
+The market anomaly scan is a discovery-only bundle that dynamically discovers every frozen event template matching `configs/radar/*_v1.yaml` (excluding the batch config) and every frozen relationship-drift template matching `configs/drift/*_v1.yaml`.
 
 ## Run
 
@@ -66,6 +66,8 @@ last-day coverage metrics
 ## Skill
 
 Use `$scan-market-anomalies` to run the fixed bundle and summarize the structured report. The Skill reads `scan_summary.json` and `report.md`, not raw K-line rows or large event/relationship files.
+
+For installation, commands, freshness semantics, output fields, interpretation, and troubleshooting, see [scan_market_anomalies_skill_guide.md](scan_market_anomalies_skill_guide.md).
 
 ## Performance
 

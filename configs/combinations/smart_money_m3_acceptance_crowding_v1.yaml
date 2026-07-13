@@ -1,0 +1,21 @@
+version: 1
+kind: factor_combination
+factor_combination:
+  id: smart_money_m3_acceptance_crowding_v1
+  name: 主板聪明钱M3价格接受与拥挤
+  description: 在M2基础上加入价格接受和拥挤交互；不得挽救失败的M2主检验。
+  components:
+    - {id: trend, source: {type: yaml, path: ../factors/prior_industry_relative_return_20d_v1.yaml}, direction: positive, weight: 0.15}
+    - {id: close_location, source: {type: yaml, path: ../factors/close_location_1d_v1.yaml}, direction: positive, weight: 0.10}
+    - {id: turnover_risk, source: {type: yaml, path: ../factors/turnover_abnormal_120d_v1.yaml}, direction: negative, weight: 0.05}
+    - {id: volatility_risk, source: {type: yaml, path: ../factors/volatility_20d_v1.yaml}, direction: negative, weight: 0.05}
+    - {id: flow_abnormal, source: {type: yaml, path: ../factors/smart_flow_abnormal_120d_v1.yaml}, direction: positive, weight: 0.20}
+    - {id: flow_persistence, source: {type: yaml, path: ../factors/smart_flow_persistence_5d_v1.yaml}, direction: positive, weight: 0.20}
+    - {id: flow_price_acceptance, source: {type: yaml, path: ../factors/smart_flow_price_acceptance_interaction_v1.yaml}, direction: positive, weight: 0.15}
+    - {id: flow_crowding, source: {type: yaml, path: ../factors/smart_flow_crowding_interaction_v1.yaml}, direction: positive, weight: 0.10}
+  preprocessing:
+    winsorize: {enabled: true, method: percentile, lower: 0.01, upper: 0.99}
+    normalization: {method: cs_zscore, scope: trade_date, min_samples: 100}
+    missing_value: {method: intersection, minimum_valid_components: 8}
+  combination: {method: weighted_sum, normalize_weights: true}
+  output: {direction: positive, column: factor_value}

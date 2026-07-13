@@ -1,0 +1,43 @@
+version: 1
+kind: factor
+factor:
+  name: turnover_abs_return_continuation_industry_v1
+  label: 行业内换手价格位移脱钩延续V1
+  description: >
+    在申万一级行业内部标准化换手率和行业相对绝对收益，构造换手活跃程度
+    超过价格位移的连续差值，并按当日行业相对收益的符号赋予方向。该版本
+    用于检验市场级关系是否只是行业或截面构成变化。
+  hypothesis: >
+    若延迟价格发现是个股层面的增量关系，则行业内标准化后仍应对未来五日
+    行业相对收益保持同方向 Rank IC；若关系消失，则更支持截面构成解释。
+  direction: positive
+  expected_shape: monotonic
+data:
+  frequency: daily
+  required_fields: [close, turnover_rate, industry_l1_code]
+  lookback_days: 1
+scope:
+  universe: liquid
+  cross_section: industry
+  group_field: industry_l1_code
+  industry_standard: SW2021
+  industry_level: L1
+  point_in_time_required: true
+  min_group_size: 10
+calculation:
+  parameters: {}
+  features:
+    ret_1d: ret(close, 1)
+    industry_ret_1d: group_mean(ret_1d, by=industry_l1_code)
+    relative_ret_1d: ret_1d - industry_ret_1d
+    turnover_score: cs_zscore(turnover_rate, by=industry_l1_code)
+    displacement_score: cs_zscore(abs(relative_ret_1d), by=industry_l1_code)
+    absorption_gap: turnover_score - displacement_score
+  formula: where(relative_ret_1d >= 0, absorption_gap, -absorption_gap)
+  missing_policy: skip
+  winsorize: mad
+  mad_scale: 5.0
+  standardize: zscore
+output:
+  value_field: factor_value
+

@@ -18,6 +18,11 @@ from .analysis import analyze_event_study
 from .config import EventStudyConfig, load_event_study_config
 from .labels import build_market_regimes, build_point_in_time_features_and_labels
 from .matching import mark_frozen_events, match_all_stages
+from .mechanism_features import (
+    TURNOVER_CONCENTRATION_AGGREGATE_FIELDS,
+    build_turnover_concentration_aggregate_features,
+    turnover_concentration_prefix_audit,
+)
 
 
 EVENT_STUDY_ENGINE_VERSION = "1.2.0"
@@ -61,6 +66,10 @@ class EventStudyRunner:
             panel = self._load_label_slice(
                 repository, label_version, label_manifest, events, cfg
             )
+            mechanism_features = self._mechanism_features(panel, events, cfg)
+            if mechanism_features is not None:
+                e0["mechanism_feature_prefix_audit"] = True
+                e0["mechanism_feature_set"] = cfg.mechanism_feature_set
             enriched = build_point_in_time_features_and_labels(panel, cfg.horizons)
             marked = mark_frozen_events(enriched, events)
             event_rows = marked.loc[marked["is_frozen_event"]].copy()
@@ -98,9 +107,19 @@ class EventStudyRunner:
                     "plan_id": plan_id, "trial_id": trial_id,
                 },
             })
+            if mechanism_features is not None:
+                event_dates = set(pd.to_datetime(events["trade_date"]).unique())
+                summary["mechanism_features"] = {
+                    "feature_set": cfg.mechanism_feature_set,
+                    "fields": list(TURNOVER_CONCENTRATION_AGGREGATE_FIELDS),
+                    "prefix_audit_passed": True,
+                    "daily_rows": len(mechanism_features),
+                    "event_date_rows": int(mechanism_features["trade_date"].isin(event_dates).sum()),
+                    "role": "diagnostic_only_cannot_rescue_primary_gate",
+                }
             self._write_artifacts(
                 output, cfg, config_hash, card, source_manifest, label_version,
-                e0, summary, matched, tables,
+                e0, summary, matched, tables, mechanism_features,
             )
             store.set_trial_status(trial_id, "SUCCESS")
             decision = store.save_decision(
@@ -165,7 +184,8 @@ class EventStudyRunner:
         cfg: EventStudyConfig,
     ) -> pd.DataFrame:
         event_dates = pd.to_datetime(events["trade_date"])
-        start = event_dates.min() - pd.Timedelta(days=120)
+        history_days = 550 if cfg.mechanism_feature_set else 120
+        start = event_dates.min() - pd.Timedelta(days=history_days)
         end = min(event_dates.max() + pd.Timedelta(days=40), pd.Timestamp(manifest["end_date"]))
         path = repository.root / "versions" / label_version / "curated" / "stock_daily_panel.parquet"
         columns = [
@@ -176,6 +196,20 @@ class EventStudyRunner:
             path, columns=columns,
             filters=[("trade_date", ">=", start), ("trade_date", "<=", end)],
         )
+
+    @staticmethod
+    def _mechanism_features(panel, events, cfg):
+        if cfg.mechanism_feature_set is None:
+            return None
+        if cfg.mechanism_feature_set != "turnover_concentration_v1":  # pragma: no cover
+            raise ValueError(f"unsupported mechanism feature set: {cfg.mechanism_feature_set}")
+        if not turnover_concentration_prefix_audit(panel):
+            raise ValueError("turnover concentration mechanism Features failed PIT-prefix audit")
+        features = build_turnover_concentration_aggregate_features(panel)
+        event_dates = pd.to_datetime(events["trade_date"])
+        return features.loc[
+            features["trade_date"].between(event_dates.min(), event_dates.max())
+        ].reset_index(drop=True)
 
     @staticmethod
     def _config_hash(cfg: EventStudyConfig) -> str:
@@ -191,6 +225,29 @@ class EventStudyRunner:
 
     @staticmethod
     def _start_lineage(store, card, run_id, cfg):
+        if cfg.lineage is not None:
+            lineage = cfg.lineage
+            idea = store.get_idea(lineage.idea_id)
+            hypothesis = store.get_hypothesis(lineage.hypothesis_id)
+            plan = store.get_plan(lineage.plan_id)
+            if hypothesis.idea_id != idea.id or plan.idea_id != idea.id:
+                raise ResearchControlError("pre-registered Event Study lineage crosses Idea boundaries")
+            if plan.hypothesis_id != hypothesis.id:
+                raise ResearchControlError("pre-registered Plan does not reference the configured Hypothesis")
+            if plan.primary_metric != lineage.primary_metric:
+                raise ResearchControlError("pre-registered Plan primary metric differs from Event Study config")
+            try:
+                store.get_trial(lineage.trial_id)
+            except KeyError:
+                store.record_trial(
+                    plan.id, "validation", "RUNNING", external_run_id=run_id,
+                    artifact_path=cfg.output_root / run_id, trial_id=lineage.trial_id,
+                )
+            else:
+                raise ResearchControlError(
+                    "pre-registered Trial already exists without a matching immutable cache"
+                )
+            return idea.id, hypothesis.id, plan.id, lineage.trial_id
         digest = hashlib.sha256(card.observation_id.encode("utf-8")).hexdigest()[:12]
         idea_id, hypothesis_id = f"idea_obs_{digest}", f"hyp_obs_{digest}"
         plan_id, trial_id = f"plan_event_{digest}", f"trial_{run_id[-16:]}"
@@ -234,6 +291,7 @@ class EventStudyRunner:
         output: Path, cfg: EventStudyConfig, config_hash: str, card: ObservationCard,
         source_manifest: dict, label_version: str, e0: dict, summary: dict,
         matched: dict[str, pd.DataFrame], tables: dict[str, pd.DataFrame],
+        mechanism_features: pd.DataFrame | None,
     ) -> None:
         if output.exists():
             raise FileExistsError(f"immutable event study already exists: {output}")
@@ -249,6 +307,8 @@ class EventStudyRunner:
         tables["progressive_controls"].to_csv(output / "e1_e3_progressive_controls.csv", index=False)
         tables["severity"].to_csv(output / "e2_severity_monotonicity.csv", index=False)
         tables["regime"].to_csv(output / "e4_regime_diagnostics.csv", index=False)
+        if mechanism_features is not None:
+            mechanism_features.to_csv(output / "mechanism_features.csv", index=False)
         matched_root = output / "matched_pairs"
         matched_root.mkdir()
         for stage, frame in matched.items():

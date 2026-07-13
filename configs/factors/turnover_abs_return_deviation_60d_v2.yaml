@@ -1,0 +1,49 @@
+version: 1
+kind: factor
+factor:
+  name: turnover_abs_return_deviation_60d_v2
+  label: 换手价格位移脱钩60日偏离V2
+  description: >
+    在全体因子合格股票截面以换手率标准分减去行业相对绝对收益标准分作为吸收差，
+    使用截至前一交易日的60日均值和总体标准差建立个股历史基线，输出当日吸收差
+    相对历史基线的绝对标准化偏离。条件评价另行限定 liquid 股票池。
+  hypothesis: >
+    若换手与价格位移脱钩只在异常状态下包含增量，则主方向因子的五日行业相对
+    Rank IC 应集中在该偏离度最高分组；该因子只用于条件分组，不独立主张 Alpha。
+  direction: positive
+  expected_shape: top_tail
+data:
+  frequency: daily
+  required_fields: [close, turnover_rate, industry_l1_code]
+  lookback_days: 61
+scope:
+  universe: default
+  cross_section: market
+  group_field: industry_l1_code
+  industry_standard: SW2021
+  industry_level: L1
+  point_in_time_required: true
+  min_group_size: 10
+calculation:
+  parameters:
+    normal_window:
+      value: 60
+      robustness_neighbors: []
+  features:
+    ret_1d: ret(close, 1)
+    industry_ret_1d: group_mean(ret_1d, by=industry_l1_code)
+    relative_ret_1d: ret_1d - industry_ret_1d
+    turnover_score: cs_zscore(turnover_rate)
+    displacement_score: cs_zscore(abs(relative_ret_1d))
+    absorption_gap: turnover_score - displacement_score
+    historical_gap: lag(absorption_gap, 1)
+    normal_mean: mean(historical_gap, normal_window)
+    normal_std: std(historical_gap, normal_window)
+  formula: abs((absorption_gap - normal_mean) / normal_std)
+  missing_policy: skip
+  winsorize: mad
+  mad_scale: 5.0
+  standardize: none
+output:
+  value_field: factor_value
+

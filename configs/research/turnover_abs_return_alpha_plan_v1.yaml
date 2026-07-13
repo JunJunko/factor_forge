@@ -1,0 +1,170 @@
+version: 1
+kind: alpha_research_plan
+plan_id: plan_turnover_abs_return_alpha_v1
+idea_id: idea_turnover_abs_return_alpha_v1
+family_id: turnover_price_impact
+name: turnover_abs_return_alpha_plan_v1
+status: frozen_for_review
+
+source_drift:
+  drift_id: drift_variable_relation_drift_v1_cb10cae608d38325
+  relation_id: turnover_abs_return
+  definition_hash: 1c11f17bfbbd5d8bbadd9864afa1ef3e9cc8a365d6bf9327691c222001e2399c
+  card_sha256: 138bcb5528c2dca23c061c5d28225a0b01146bfe7bcbee0de5be2f3f02e287de
+  data_version: data_v1_20260710T115133Z_208e9fc8
+  effective_as_of_date: "2026-07-10"
+  interpretation_boundary: >
+    The drift is contemporaneous and label-free with respect to future returns.
+    It motivates hypotheses but is not itself Alpha evidence.
+
+primary_metric:
+  id: liquid_stock_minus_sw_l1_return_5d_daily_rank_ic
+  universe: liquid
+  horizon_days: 5
+  target: stock_minus_sw_l1_return
+  statistic: daily_rank_ic
+  required_direction: positive
+
+hypotheses:
+  - id: hyp_delayed_price_discovery_v1
+    role: primary
+    statement: >
+      When turnover is high relative to same-day industry-relative price
+      displacement, the signed displacement reflects temporarily absorbed
+      informed flow and predicts continuation over the next five trading days.
+    falsifier: >
+      Discovery Rank IC is non-positive, or the positive relationship fails the
+      frozen validation Gate.
+  - id: hyp_liquidity_reversal_v1
+    role: competing_direction
+    alternative_to: hyp_delayed_price_discovery_v1
+    statement: >
+      High turnover with limited same-day displacement is non-informational
+      two-way liquidity demand and predicts reversal over the next five trading
+      days.
+    support_rule: >
+      A negative discovery Rank IC supports this hypothesis only as a reason for
+      revise_one_hypothesis; the validation direction may not be flipped inside
+      this frozen plan.
+  - id: hyp_cross_section_composition_v1
+    role: competing_mechanism
+    alternative_to: hyp_delayed_price_discovery_v1
+    statement: >
+      The market-level drift is caused by industry or cross-sectional
+      composition. The relationship should disappear after using an industry-
+      relative target and industry-within standardization.
+    support_rule: >
+      The market-scoped validation passes while the industry-within validation
+      fails or reverses, or both stock-level validations fail.
+
+measurements:
+  - id: relative_return_1d
+    bucket: descriptor
+    expression: ret(close, 1) - group_mean(ret(close, 1), by=industry_l1_code)
+    pit_available: true
+    lookback_days: 1
+    missing_behavior: skip
+  - id: turnover_score
+    bucket: descriptor
+    expression: cs_zscore(turnover_rate)
+    pit_available: true
+    lookback_days: 0
+    missing_behavior: skip
+  - id: displacement_score
+    bucket: descriptor
+    expression: cs_zscore(abs(relative_return_1d))
+    pit_available: true
+    lookback_days: 1
+    missing_behavior: skip
+  - id: absorption_gap
+    bucket: discriminator
+    expression: turnover_score - displacement_score
+    pit_available: true
+    lookback_days: 1
+    missing_behavior: skip
+  - id: signed_absorption_gap
+    bucket: discriminator
+    expression: where(relative_return_1d >= 0, absorption_gap, -absorption_gap)
+    pit_available: true
+    lookback_days: 1
+    missing_behavior: skip
+    larger_value_hypothesis: delayed_continuation
+  - id: industry_signed_absorption_gap
+    bucket: discriminator
+    expression: signed_absorption_gap with industry_l1 cross-sectional operators
+    pit_available: true
+    lookback_days: 1
+    missing_behavior: skip_if_industry_members_below_10
+  - id: absorption_gap_deviation_60d
+    bucket: context_control
+    expression: absolute z-distance from the prior 60-day absorption-gap history
+    pit_available: true
+    lookback_days: 61
+    missing_behavior: skip
+  - id: standard_exposure_diagnostics
+    bucket: context_control
+    expression: industry_exposure, size_exposure, liquidity universe and 20bps costs
+    pit_available: true
+    lookback_days: contract_defined
+    missing_behavior: deterministic_gate
+
+sample_policy:
+  discovery: {start: "2016-01-04", end: "2021-12-31"}
+  validation: {start: "2022-01-01", end: "2025-12-31"}
+  hypothesis_formation_embargo: {start: "2026-01-01", end: "2026-07-10"}
+  forward_observation_starts_after: "2026-07-10"
+  sealed_test_access: forbidden_without_separate_approval
+
+trials:
+  - id: trial_turnover_abs_return_discovery_v1
+    order: 1
+    data_role: discovery
+    experiment_config: configs/experiments/turnover_abs_return_discovery_v1.yaml
+    gate: >
+      L0 and temporal gates pass and the primary metric is positive. A negative
+      primary metric stops the plan with revise_one_hypothesis; zero or invalid
+      evidence stops with reject.
+  - id: trial_turnover_abs_return_validation_market_v1
+    order: 2
+    data_role: validation
+    requires: trial_turnover_abs_return_discovery_v1 passes without direction revision
+    experiment_config: configs/experiments/turnover_abs_return_validation_market_v1.yaml
+    gate: >
+      Deterministic L1 Gate passes for the frozen positive direction and the
+      primary metric remains positive. No direction or formula changes allowed.
+  - id: trial_turnover_abs_return_validation_industry_v1
+    order: 3
+    data_role: validation
+    requires: trial_turnover_abs_return_validation_market_v1 passes
+    experiment_config: configs/experiments/turnover_abs_return_validation_industry_v1.yaml
+    gate: >
+      Industry-within factor passes the deterministic L1 Gate with a positive
+      primary metric. Failure supports the composition explanation and blocks
+      observe_forward.
+  - id: trial_turnover_abs_return_validation_conditional_v1
+    order: 4
+    data_role: validation
+    requires: trial_turnover_abs_return_validation_industry_v1 passes
+    experiment_config: configs/experiments/turnover_abs_return_validation_conditional_v1.yaml
+    gate: >
+      The highest 60-day deviation quintile has positive 5D industry-relative
+      conditional Rank IC with adequate configured group coverage. This trial is
+      diagnostic and cannot rescue a failed unconditional validation.
+
+decision_gate:
+  reject: any required L0 or deterministic L1 Gate fails without a single identified revision
+  revise_one_hypothesis: discovery supports reversal or one pre-registered mechanism needs revision
+  observe_forward: trials 1 through 3 pass and trial 4 does not contradict them
+  promote_candidate: forbidden_before_post_freeze_forward_evidence
+
+budgets:
+  idea: {max_trials: 4, max_revisions: 1, max_validation_peeks: 3}
+  family: {max_trials: 25, max_revisions: 10, max_validation_peeks: 8}
+  planned_consumption_if_all_run: {trials: 4, revisions: 0, validation_peeks: 3}
+
+execution_policy:
+  current_action: review_frozen_plan
+  experiment_execution_authorized: false
+  record_trial_only_when_execution_is_attempted: true
+  do_not_select_direction_on_validation: true
+

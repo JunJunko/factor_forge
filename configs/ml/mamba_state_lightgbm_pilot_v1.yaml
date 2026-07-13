@@ -1,0 +1,70 @@
+version: 1
+name: mamba_state_lightgbm_pilot_v1
+project_config: configs/project.yaml
+data_version: latest
+require_full_segment_coverage: true
+segments:
+  train: {start: "2016-01-01", end: "2022-12-31"}
+  valid: {start: "2023-01-01", end: "2023-12-31"}
+  test: {start: "2024-01-01", end: "2026-06-30"}
+features:
+  windows: [5, 10, 20, 60]
+  winsor_quantile: 0.01
+  cross_sectional_zscore: true
+label:
+  horizon: 5
+  price: adj_open
+  excess_over_universe: true
+sequence:
+  length: 60
+  min_valid_days: 40
+  include_event_channels: true
+  event_templates:
+    - configs/radar/price_drop_without_volume_confirmation_v1.yaml
+    - configs/radar/volume_surge_without_price_impact_v1.yaml
+    - configs/radar/high_turnover_low_displacement_v1.yaml
+    - configs/radar/low_liquidity_large_displacement_v1.yaml
+    - configs/radar/long_lower_wick_strong_close_v1.yaml
+    - configs/radar/stock_industry_divergence_v1.yaml
+    - configs/radar/volatility_compression_breakout_v1.yaml
+    - configs/radar/trend_exhaustion_v1.yaml
+encoder:
+  backend: torch_reference
+  d_model: 32
+  d_state: 16
+  layers: 2
+  embedding_dim: 16
+  dropout: 0.10
+  mask_probability: 0.20
+training:
+  epochs: 30
+  batch_size: 512
+  learning_rate: 0.001
+  weight_decay: 0.0001
+  patience: 5
+  validation_fraction: 0.15
+  max_train_samples: 200000
+  max_valid_samples: 50000
+  random_seeds: [17, 29, 43]
+  device: auto
+  num_workers: 0
+lightgbm:
+  objective: regression
+  learning_rate: 0.03
+  num_leaves: 31
+  max_depth: -1
+  n_estimators: 500
+  subsample: 0.8
+  colsample_bytree: 0.8
+  reg_alpha: 0.1
+  reg_lambda: 0.1
+  random_state: 42
+  n_jobs: -1
+portfolio:
+  universe: liquid
+  top_n: 50
+  holding_days: 5
+  initial_cash: 10000000
+  lot_size: 100
+  cost_bps: 15
+output_root: artifacts/mamba_state_runs

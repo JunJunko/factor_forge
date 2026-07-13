@@ -34,6 +34,7 @@ class ProjectDataConfig(BaseModel):
     start_date: str = "20150101"
     exchanges: list[str] = Field(default_factory=lambda: ["SSE", "SZSE"])
     boards: list[str] = Field(default_factory=lambda: ["main", "chinext", "star"])
+    include_moneyflow: bool = False
     industry_standard: str = "SW2021"
     industry_level: str = "L1"
     industry_min_group_size: int = 10
@@ -64,7 +65,7 @@ class FactorData(BaseModel):
 
 
 class FactorScope(BaseModel):
-    universe: Literal["default", "tradeable", "liquid"] = "default"
+    universe: Literal["default", "tradeable", "liquid", "factor_eligible"] = "default"
     cross_section: Literal["market", "industry"] = "market"
     group_field: str = "industry_l1_code"
     industry_standard: str = "SW2021"
@@ -237,12 +238,38 @@ class L0Config(BaseModel):
     future_data_violation: int = 0
 
 
+class PrimaryGateConfig(BaseModel):
+    target: Literal["stock_return", "stock_minus_sw_l1_return"]
+    variant: str = "raw"
+    universe: Literal["tradeable", "liquid"]
+    horizon: int = Field(ge=1)
+    metric: Literal["rank_ic"] = "rank_ic"
+    min_mean: float = 0.01
+    min_positive_ratio: float = Field(default=0.50, ge=0, le=1)
+    max_fdr_q: float | None = Field(default=0.10, ge=0, le=1)
+    allow_top_tail_fallback: bool = False
+
+
+class ConditionalPrimaryGateConfig(PrimaryGateConfig):
+    condition_quantile: int = Field(ge=1)
+
+
 class ConditionalICConfig(BaseModel):
     enabled: bool = False
     conditioning_factor: Literal["main_factor"] | Path = "main_factor"
     quantile_groups: int = Field(default=5, ge=2, le=20)
     min_group_size: int = Field(default=20, ge=3)
     store_daily_ic: bool = True
+    primary_gate: ConditionalPrimaryGateConfig | None = None
+
+    @model_validator(mode="after")
+    def validate_primary_gate(self) -> "ConditionalICConfig":
+        if self.primary_gate is not None:
+            if not self.enabled:
+                raise ValueError("conditional primary_gate requires conditional_ic.enabled=true")
+            if self.primary_gate.condition_quantile > self.quantile_groups:
+                raise ValueError("conditional primary_gate quantile exceeds quantile_groups")
+        return self
 
 
 class L1Config(BaseModel):
@@ -255,7 +282,20 @@ class L1Config(BaseModel):
     targets: list[Literal["stock_return", "stock_minus_sw_l1_return"]] = Field(
         default_factory=lambda: ["stock_return"]
     )
+    primary_gate: PrimaryGateConfig | None = None
     conditional_ic: ConditionalICConfig = Field(default_factory=ConditionalICConfig)
+
+    @model_validator(mode="after")
+    def validate_primary_gates(self) -> "L1Config":
+        gates = [self.primary_gate, self.conditional_ic.primary_gate]
+        for gate in (item for item in gates if item is not None):
+            if gate.target not in self.targets:
+                raise ValueError("primary_gate target must be listed in stage_l1.targets")
+            if gate.universe not in self.universes:
+                raise ValueError("primary_gate universe must be listed in stage_l1.universes")
+            if gate.horizon not in self.forward_horizons:
+                raise ValueError("primary_gate horizon must be listed in stage_l1.forward_horizons")
+        return self
 
 
 class IndustrySelectorOverrides(BaseModel):

@@ -46,6 +46,9 @@ class DSLContext:
     values: dict[str, Any]
     min_group_size: int = 10
     allowed_fields: set[str] | None = None
+    # A calculation-universe mask is intentionally applied only to cross-sectional
+    # operators.  Time-series operators retain each security's full PIT history.
+    cross_section_mask: pd.Series | None = None
 
 
 class FormulaEvaluator:
@@ -112,6 +115,12 @@ class FormulaEvaluator:
         )
 
     def _call(self, name: str, args: list, kwargs: dict):
+        def cross_section_inputs(value: pd.Series, by: pd.Series | None = None) -> tuple[pd.Series, pd.Series | None]:
+            mask = self.context.cross_section_mask
+            if mask is None:
+                return value, by
+            return value.where(mask), by.where(mask) if by is not None else None
+
         def window(minimum: int = 1) -> int:
             value = kwargs.pop("window", args.pop(1) if len(args) > 1 else None)
             if isinstance(value, bool) or not isinstance(value, (int, float)) or int(value) != value or value < minimum:
@@ -131,14 +140,16 @@ class FormulaEvaluator:
             return fn(args[0], window(2 if name == "slope" else 1))
         if name in {"cs_rank", "cs_percentile", "cs_zscore"}:
             fn = ops.cs_zscore if name == "cs_zscore" else ops.cs_rank
+            value, by = cross_section_inputs(args[0], kwargs.get("by"))
             return fn(
-                args[0], by=kwargs.get("by"), min_group_size=self.context.min_group_size
+                value, by=by, min_group_size=self.context.min_group_size
             )
         if name == "group_mean":
             if "by" not in kwargs:
                 raise DSLValidationError("group_mean requires by=<group field>")
+            value, by = cross_section_inputs(args[0], kwargs["by"])
             return ops.group_mean(
-                args[0], kwargs["by"], min_group_size=self.context.min_group_size
+                value, by, min_group_size=self.context.min_group_size
             )
         if name == "abs":
             return abs(args[0])

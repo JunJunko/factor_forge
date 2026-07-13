@@ -1,0 +1,140 @@
+version: 2
+kind: anomaly_mechanism_experiment_plan
+plan_id: plan_turnover_concentration_mechanisms_v2
+idea_id: idea_turnover_concentration_mechanisms_v1
+family_id: turnover_concentration_mechanisms
+name: turnover_concentration_mechanism_plan_v2
+status: cancelled_observation_quality_gate
+supersedes: plan_turnover_concentration_mechanisms_v1
+revision_consumes_budget_when_trial_runs: true
+
+source_adjudication:
+  observation_id: obs_turnover_concentration_v1_171a2e2c3cd87b81
+  prior_plan_id: plan_turnover_concentration_mechanisms_v1
+  prior_trial_id: trial_turnover_concentration_phase3_v1
+  decision_id: decision_19a8f8a642e3
+  action: revise_one_hypothesis
+  reason: "Full-control balance failed for prior_return_5d, log_avg_amount_20d, and log_total_mv."
+  prior_primary_metric_value: 0.0007575016823907428
+  prior_primary_metric_interpretable: false
+
+revised_hypothesis:
+  id: hyp_information_driven_residual_concentration_v2
+  revises: hyp_information_driven_concentration_v1
+  unchanged_competitors:
+    - hyp_passive_flow_migration_v1
+    - hyp_one_off_mechanical_volume_v1
+  revision_scope: Replace absolute-amount contributor selection with amount residual after normal-liquidity and size controls.
+
+revised_observation_definition:
+  proposed_template_id: turnover_residual_concentration_v2
+  entity_scope: stock_contributors_with_market_state
+  universe_field: is_liquid
+  inputs: [amount_cny, log_total_mv, industry_l1_code, adj_close]
+  normal_liquidity:
+    field: log_avg_amount_20d_prior
+    formula: mean(log(amount_cny), prior 20 valid trading rows excluding current T)
+    min_periods: 10
+  residual_model:
+    frequency: daily_cross_section
+    target: log(amount_cny)
+    controls: [log_avg_amount_20d_prior, log_total_mv]
+    intercept: true
+    min_cross_section: 100
+  contributor_rule:
+    field: amount_residual_cross_section_percentile
+    threshold_gte: 0.95
+  market_state:
+    field: top5_positive_amount_residual_mass_share
+    transformation: Sum positive residual mass among contributor stocks divided by all positive residual mass.
+    history_percentile_window: 252
+    history_min_periods: 120
+    strict_prior_history: true
+    trigger_percentile_gte: 0.95
+  event_rule: contributor_rule AND market_state
+  filters: {min_listing_days: 250, exclude_st: true, exclude_suspended: true, exclude_limit_locked: true}
+  no_threshold_tuning_from_v1_results: true
+
+frozen_revised_observation:
+  observation_id: obs_turnover_residual_concentration_v2_10e883bd866e5244
+  template_id: turnover_residual_concentration_v2
+  definition_hash: 730158fb84537dda81aa6016f1a7dca5e729a1adb8265938e94a0f3a39725ea3
+  card_sha256: 46c96b4d4c08dc745bcaa6289de11188e99ede0122ad6319eab11478da351025
+  events_sha256: cbe180a1c292f8e1c4bffe234e2e9487b3953de330d892b4f1f5c6b5842aec1a
+  data_version: data_v1_20260710T115133Z_208e9fc8
+  as_of_date: "2026-07-10"
+  event_count: 50
+  scan_date_event_count: 0
+  temporal_audit_passed: true
+  future_label_fields_present: false
+  quality_gate_passed: false
+  quality_gate_failures: [event_count_lt_100]
+
+measurements:
+  - {id: top5_positive_amount_residual_mass_share, bucket: descriptor, point_in_time: true, lookback_days: 20}
+  - {id: residual_concentration_history_percentile, bucket: descriptor, point_in_time: true, lookback_days: 272}
+  - {id: amount_residual_cross_section_percentile, bucket: discriminator, point_in_time: true, lookback_days: 20}
+  - {id: industry_residual_mass_hhi, bucket: discriminator, point_in_time: true, lookback_days: 20}
+  - {id: top_size_decile_residual_mass_share, bucket: discriminator_context, point_in_time: true, lookback_days: 20}
+  - {id: contributor_return_sign_coherence, bucket: discriminator, point_in_time: true, lookback_days: 20}
+  - {id: contributor_volume_price_efficiency, bucket: discriminator_context, point_in_time: true, lookback_days: 20}
+  - {id: residual_concentration_persistence_5d, bucket: discriminator, point_in_time: true, lookback_days: 276}
+
+implementation:
+  builder: factor_forge.radar.concentration_features.build_turnover_residual_concentration_features
+  prefix_audit: factor_forge.radar.concentration_features.turnover_residual_concentration_prefix_audit
+  template: configs/radar/turnover_residual_concentration_v2.yaml
+  measurement_count: 8
+  pit_prefix_tests_passed: true
+  future_mutation_isolation_test_passed: true
+
+expression_gate:
+  factor_dsl_status: deferred
+  route: deterministic_radar_event_study_extension
+  reason: The revised hypothesis is a market-level residual-concentration Observation, not an executable stock Factor.
+  implementation_requirement: Implement the frozen residual model and all eight measurements with PIT-prefix tests before creating a new Observation or Event Study config.
+
+primary_metric:
+  id: full_controls_5d_daily_mean_paired_excess
+  unchanged_from_plan: plan_turnover_concentration_mechanisms_v1
+  stage: full_controls
+  horizon: 5
+  estimator: daily_equal_weight_mean_paired_excess
+  direction_policy: two_sided_and_frozen_from_observed_gate_result
+  matching:
+    exact: [trade_date, industry_l1_code]
+    controls: [prior_return_5d, volatility_20d, log_avg_amount_20d, log_total_mv]
+    neighbors: 3
+    caliper: 3.0
+    min_match_rate: 0.70
+  gate:
+    min_mature_events: 200
+    max_abs_smd: 0.20
+    min_abs_nw_t: 2.0
+    max_fdr_q: 0.10
+    min_daily_direction_ratio: 0.52
+  balance_first_rule: Do not interpret the paired effect unless every full-control absolute SMD is at most 0.20.
+  non_rescue_rule: Diagnostics, severity, and the prior V1 result cannot rescue a failed V2 Gate.
+
+trials:
+  - id: trial_turnover_concentration_phase3_v2
+    order: 1
+    data_role: validation
+    revision: true
+    design: new_frozen_residual_concentration_observation_then_matched_event_study
+    primary_metric: full_controls_5d_daily_mean_paired_excess
+    execution_authorized: false
+    requires: revised_template_implemented_and_PIT_prefix_tested_and_new_observation_frozen
+    failure_action: reject_family_without_further_hypothesis_regeneration
+
+budgets:
+  current_before_trial: {trials_used: 1, revisions_used: 0, validation_peeks_used: 1}
+  planned_consumption: {trials: 1, revisions: 1, validation_peeks: 1}
+
+execution_policy:
+  current_action: stop_on_observation_quality_gate_failure
+  experiment_execution_authorized: false
+  event_study_config_creation_authorized: false
+  do_not_reuse_v1_observation_for_v2_trial: true
+  do_not_lower_thresholds_or_regenerate_observation: true
+  do_not_read_raw_market_tables_with_llm: true

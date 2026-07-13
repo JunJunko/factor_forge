@@ -1,0 +1,24 @@
+version: 1
+id: turnover_residual_concentration_v2
+kind: composite_anomaly
+description: 控制严格历史常态成交额与当日市值后，正向成交额残差向少数股票异常集中
+observation_type: relation_anomaly
+data:
+  required_fields: [adj_close, amount_cny, log_total_mv]
+  universe_field: is_liquid
+  entity_field: ts_code
+  date_field: trade_date
+  industry_field: industry_l1_code
+scan: {discovery_window_days: 252, recent_window_days: 20}
+filters: {min_listing_days: 250, exclude_st: true, exclude_suspended: true, exclude_limit_locked: true}
+quality_gate: {min_events: 100, min_unique_stocks: 30, min_unique_industries: 8, max_industry_share: 0.45, max_single_stock_share: 0.08}
+parameters:
+  recipe: turnover_residual_concentration
+  history: {window: 252, min_periods: 120}
+  short_window: 5
+  long_window: 20
+  liquidity_min_periods: 10
+  upper_percentile: 0.95
+  lower_percentile: 0.10
+  change_threshold: 0.30
+  min_cross_section: 100

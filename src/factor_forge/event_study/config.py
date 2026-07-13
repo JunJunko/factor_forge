@@ -64,6 +64,14 @@ class GateConfig(StrictModel):
     max_abs_smd: float = Field(default=0.20, gt=0, le=1)
 
 
+class ResearchLineageConfig(StrictModel):
+    idea_id: str = Field(pattern=r"^[a-z][a-z0-9_-]+$")
+    hypothesis_id: str = Field(pattern=r"^[a-z][a-z0-9_-]+$")
+    plan_id: str = Field(pattern=r"^[a-z][a-z0-9_-]+$")
+    trial_id: str = Field(pattern=r"^[a-z][a-z0-9_-]+$")
+    primary_metric: Literal["full_controls_5d_daily_mean_paired_excess"]
+
+
 class EventStudyConfig(StrictModel):
     version: Literal[1]
     name: str
@@ -75,6 +83,8 @@ class EventStudyConfig(StrictModel):
     matching: MatchingConfig
     inference: InferenceConfig
     gate: GateConfig
+    mechanism_feature_set: Literal["turnover_concentration_v1"] | None = None
+    lineage: ResearchLineageConfig | None = None
     output_root: Path = Path("artifacts/radar_event_studies")
     research_db: Path | None = None
 

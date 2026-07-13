@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pandas as pd
 import typer
+import yaml
 
 from factor_forge.config import load_factor, load_project
 from factor_forge.data.ingestion import TushareIngestor
@@ -21,6 +22,7 @@ factor_app = typer.Typer(help="Validate declarative factor definitions")
 experiment_app = typer.Typer(help="Run staged factor experiments")
 ml_app = typer.Typer(help="Run cross-sectional LightGBM experiments")
 research_app = typer.Typer(help="Track research lineage, budgets, decisions, and run artifacts")
+feature_registry_app = typer.Typer(help="Validate auditable, non-executable research feature entries")
 radar_app = typer.Typer(help="Scan label-free market observations with frozen templates")
 event_study_app = typer.Typer(help="Run matched event studies on frozen observations")
 drift_app = typer.Typer(help="Scan recent market relation drift with frozen templates")
@@ -30,6 +32,7 @@ app.add_typer(factor_app, name="factor")
 app.add_typer(experiment_app, name="experiment")
 app.add_typer(ml_app, name="ml")
 app.add_typer(research_app, name="research")
+app.add_typer(feature_registry_app, name="feature-registry")
 app.add_typer(radar_app, name="radar")
 app.add_typer(event_study_app, name="event-study")
 app.add_typer(drift_app, name="drift")
@@ -48,7 +51,7 @@ def anomaly_scan_latest(
         help="Synchronize missing completed trading days before resolving latest",
     ),
 ):
-    """Run exactly eight event templates and two relationship-drift templates."""
+    """Discover and run all configured event and relationship-drift templates."""
     from factor_forge.radar.batch import MarketAnomalyScanRunner
 
     _echo_model(MarketAnomalyScanRunner().run(
@@ -152,6 +155,20 @@ def research_init(
     typer.echo(f"Initialized {store.path}")
 
 
+@feature_registry_app.command("validate")
+def feature_registry_validate(path: Path):
+    """Validate one entry or a registry index without executing a feature."""
+    from factor_forge.feature_registry import load_feature_entry, load_feature_registry
+
+    raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    if raw.get("kind") == "feature_registry":
+        entries = load_feature_registry(path)
+        typer.echo(f"VALID: {path} entries={len(entries)}")
+    else:
+        entry = load_feature_entry(path)
+        typer.echo(f"VALID: {entry.id} lifecycle={entry.lifecycle}")
+
+
 @research_app.command("index-artifacts")
 def research_index_artifacts(
     artifacts_root: Path = typer.Option(Path("artifacts")),
@@ -225,6 +242,21 @@ def research_plan_create(
         config_path=config_path, plan_id=plan_id,
     )
     _echo_model(plan)
+
+
+@research_app.command("compare-daily-ic")
+def research_compare_daily_ic(
+    plan: Path = typer.Option(..., "--plan", help="Frozen alpha research plan YAML"),
+    market_run: Path = typer.Option(..., "--market-run", help="Market trial run directory or daily IC artifact"),
+    industry_run: Path = typer.Option(..., "--industry-run", help="Industry trial run directory or daily IC artifact"),
+    output_root: Path = typer.Option(Path("artifacts/research_comparisons"), "--output-root"),
+):
+    """Materialize the frozen cross-Trial composition comparison after T2 and T3."""
+    from factor_forge.research.comparison import create_composition_comparison
+
+    _echo_model(create_composition_comparison(
+        plan, market_run, industry_run, output_root=output_root
+    ))
 
 
 @research_app.command("trial-record")
@@ -306,6 +338,18 @@ def research_trial_status(
     _echo_model(_research_store(config, db).set_trial_status(trial_id, TrialStatus(status.upper())))
 
 
+@research_app.command("plan-status")
+def research_plan_status(
+    plan_id: str,
+    status: str = typer.Option(..., help="cancelled"),
+    config: Path = typer.Option(Path("configs/project.yaml")),
+    db: Path | None = typer.Option(None),
+):
+    from factor_forge.research_control.models import PlanStatus
+
+    _echo_model(_research_store(config, db).set_plan_status(plan_id, PlanStatus(status.upper())))
+
+
 @research_app.command("sealed-access-record")
 def research_sealed_access_record(
     idea_id: str,
@@ -336,6 +380,75 @@ def value_ml_run(path: Path):
     """Train the point-in-time 5/10/20-day value-recovery ensemble."""
     from factor_forge.ml.value_regression import ValueRegressionRunner
     result = ValueRegressionRunner().run(path)
+    typer.echo(json.dumps(result, ensure_ascii=False, indent=2, default=json_default))
+
+
+@ml_app.command("mamba-state-run")
+def mamba_state_run(path: Path):
+    """Run the frozen Raw / State / Raw+State cross-sectional pilot."""
+    from factor_forge.ml.mamba_state_runner import MambaStateLightGBMRunner
+
+    result = MambaStateLightGBMRunner().run(path)
+    typer.echo(json.dumps(result, ensure_ascii=False, indent=2, default=json_default))
+
+
+@ml_app.command("mamba-anomaly-demo")
+def mamba_anomaly_demo(
+    scan_summary: Path = typer.Option(..., "--scan-summary"),
+    project_config: Path = typer.Option(Path("configs/project.yaml"), "--project-config"),
+    output_root: Path = typer.Option(Path("artifacts/mamba_anomaly_demos"), "--output-root"),
+):
+    """Run a bounded CPU state-ranking demo driven by a frozen anomaly scan."""
+    from factor_forge.ml.mamba_anomaly_demo import TodayAnomalyStateDemoRunner
+
+    result = TodayAnomalyStateDemoRunner().run(
+        scan_summary, project_config=project_config, output_root=output_root,
+    )
+    typer.echo(json.dumps(result, ensure_ascii=False, indent=2, default=json_default))
+
+
+@ml_app.command("event-episode-run")
+def event_episode_run(path: Path):
+    """Run the frozen single-template Event Episode E0-E3 ranker."""
+    from factor_forge.ml.event_episode_runner import EventEpisodeRankerRunner
+
+    result = EventEpisodeRankerRunner().run(path)
+    typer.echo(json.dumps(result, ensure_ascii=False, indent=2, default=json_default))
+
+
+@ml_app.command("event-episode-oos")
+def event_episode_oos(
+    run_dir: Path = typer.Option(..., "--run-dir"),
+    project_config: Path = typer.Option(Path("configs/project.yaml"), "--project-config"),
+    top_n: int = typer.Option(10, "--top-n"),
+    holding_days: int = typer.Option(5, "--holding-days"),
+    cost_bps: float = typer.Option(15.0, "--cost-bps"),
+):
+    """Backtest held-out Event Episode predictions with T+1-open execution."""
+    from factor_forge.ml.event_episode_oos import EventEpisodeOOSBacktestRunner
+
+    result = EventEpisodeOOSBacktestRunner().run(
+        run_dir, project_config=project_config, top_n=top_n,
+        holding_days=holding_days, cost_bps=cost_bps,
+    )
+    typer.echo(json.dumps(result, ensure_ascii=False, indent=2, default=json_default))
+
+
+@ml_app.command("recent-anomaly-structure-run")
+def recent_anomaly_structure_run(path: Path):
+    """Run the frozen PIT rolling-OOS recent anomaly structure ranker."""
+    from factor_forge.ml.recent_anomaly_runner import RecentAnomalyStructureRunner
+
+    result = RecentAnomalyStructureRunner().run(path)
+    typer.echo(json.dumps(result, ensure_ascii=False, indent=2, default=json_default))
+
+
+@ml_app.command("event-factor-sensitivity-run")
+def event_factor_sensitivity_run(path: Path):
+    """Run Event-Mamba named sensitivities with strict chronological OOF stacking."""
+    from factor_forge.ml.event_factor_sensitivity_runner import EventFactorSensitivityRunner
+
+    result = EventFactorSensitivityRunner().run(path)
     typer.echo(json.dumps(result, ensure_ascii=False, indent=2, default=json_default))
 
 

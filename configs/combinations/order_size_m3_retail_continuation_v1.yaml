@@ -1,0 +1,20 @@
+version: 1
+kind: factor_combination
+factor_combination:
+  id: order_size_m3_retail_continuation_v1
+  name: 订单规模迁移M3小单扩散竞争解释
+  description: 在M2上加入小单跟随加速度，检验小单扩散究竟延续还是衰竭。
+  components:
+    - {id: total_flow, source: {type: yaml, path: ../factors/smart_flow_abnormal_120d_v1.yaml}, direction: positive, weight: 0.10}
+    - {id: trend, source: {type: yaml, path: ../factors/prior_industry_relative_return_20d_v1.yaml}, direction: positive, weight: 0.10}
+    - {id: turnover_risk, source: {type: yaml, path: ../factors/turnover_abnormal_120d_v1.yaml}, direction: negative, weight: 0.10}
+    - {id: volatility_risk, source: {type: yaml, path: ../factors/volatility_20d_v1.yaml}, direction: negative, weight: 0.10}
+    - {id: large_lead, source: {type: yaml, path: ../factors/large_order_lead_3d_v1.yaml}, direction: positive, weight: 0.15}
+    - {id: diffusion_gap, source: {type: yaml, path: ../factors/order_size_diffusion_gap_v1.yaml}, direction: positive, weight: 0.25}
+    - {id: small_follow, source: {type: yaml, path: ../factors/small_order_follow_acceleration_3d_v1.yaml}, direction: positive, weight: 0.20}
+  preprocessing:
+    winsorize: {enabled: true, method: percentile, lower: 0.01, upper: 0.99}
+    normalization: {method: cs_zscore, scope: trade_date, min_samples: 100}
+    missing_value: {method: intersection, minimum_valid_components: 7}
+  combination: {method: weighted_sum, normalize_weights: true}
+  output: {direction: positive, column: factor_value}

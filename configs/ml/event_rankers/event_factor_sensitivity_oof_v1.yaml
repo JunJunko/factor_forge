@@ -1,0 +1,81 @@
+version: 1
+name: event_factor_sensitivity_oof_v1
+project_config: configs/project.yaml
+data_version: data_v1_20260710T115133Z_208e9fc8
+scan_summary: artifacts/market_anomaly_scans/market_scan_d629b6bbfc6423cd/scan_summary.json
+as_of_date: "2026-07-10"
+event_templates:
+  - configs/radar/price_drop_without_volume_confirmation_v1.yaml
+  - configs/radar/volume_surge_without_price_impact_v1.yaml
+  - configs/radar/high_turnover_low_displacement_v1.yaml
+  - configs/radar/long_lower_wick_strong_close_v1.yaml
+  - configs/radar/stock_industry_divergence_v1.yaml
+  - configs/radar/volatility_compression_breakout_v1.yaml
+  - configs/radar/trend_exhaustion_v1.yaml
+primary_horizon: 5
+features:
+  windows: [5, 10, 20, 60]
+  winsor_quantile: 0.01
+  cross_sectional_zscore: true
+event:
+  history_trading_days: 252
+  sequence_length: 60
+  min_valid_days: 40
+  dedup_trading_days: 5
+  factor_basis:
+    - short_reversal
+    - trend_acceleration
+    - volume_price_efficiency
+    - volatility_compression
+    - industry_relative_return
+    - liquidity_displacement
+    - intraday_rejection
+oof:
+  training_days: 100
+  validation_days: 20
+  block_days: 20
+  minimum_train_events: 8000
+  minimum_prior_oof_rows: 5000
+  evaluation_blocks: 3
+encoder:
+  backend: torch_reference
+  d_model: 16
+  d_state: 8
+  layers: 1
+  embedding_dim: 8
+  dropout: 0.10
+  mask_probability: 0.20
+event_mamba:
+  template_embedding_dim: 4
+  residual_embedding_dim: 4
+  supervised_loss_weight: 1.0
+  reconstruction_loss_weight: 0.10
+  beta_l1_weight: 0.001
+training:
+  epochs: 3
+  batch_size: 256
+  learning_rate: 0.002
+  weight_decay: 0.0001
+  patience: 2
+  validation_fraction: 0.15
+  max_train_samples: 50000
+  max_valid_samples: 20000
+  random_seeds: [17]
+  device: cpu
+  num_workers: 0
+lightgbm:
+  objective: regression
+  learning_rate: 0.03
+  num_leaves: 31
+  max_depth: -1
+  n_estimators: 300
+  subsample: 0.8
+  colsample_bytree: 0.8
+  reg_alpha: 0.1
+  reg_lambda: 0.1
+  random_state: 42
+  n_jobs: -1
+primary_metric: paired_daily_rank_ic_delta_e2_vs_e1
+gate_min_nw_t: 2.0
+gate_min_positive_ratio: 0.50
+output_root: artifacts/event_factor_sensitivity_runs

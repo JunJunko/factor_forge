@@ -125,6 +125,18 @@ def test_status_transitions_are_explicit_and_terminal(tmp_path):
         store.set_trial_status(trial.id, "RUNNING")
 
 
+def test_superseded_pretrial_plan_can_be_cancelled_without_budget_consumption(tmp_path):
+    store = ResearchControlStore(tmp_path / "research.sqlite3")
+    store.initialize()
+    idea = store.create_idea("supersede", "freeze a corrected plan", "plan_state")
+    plan = store.create_plan(idea.id, "v2", "primary")
+    cancelled = store.set_plan_status(plan.id, "CANCELLED")
+    assert cancelled.status.value == "CANCELLED"
+    assert store.get_budget("idea", idea.id).trials_used == 0
+    with pytest.raises(ResearchControlError, match="invalid plan transition"):
+        store.set_plan_status(plan.id, "READY")
+
+
 def test_phase0_protocol_is_strict_and_freezes_research_boundaries():
     protocol = load_phase0_protocol("configs/research/phase0_protocol_v1.yaml")
     assert len(protocol.event_templates) == 8

@@ -13,6 +13,9 @@ class FactorEngine:
     def compute(self, panel: pd.DataFrame, spec: FactorSpec) -> pd.DataFrame:
         indexed = self._normalize_panel(panel)
         self._validate_fields(indexed, spec)
+        calculation_mask = None
+        if spec.scope.universe == "factor_eligible":
+            calculation_mask = indexed["is_factor_eligible"].fillna(False).astype(bool)
         values = {
             name: parameter.value
             for name, parameter in spec.calculation.parameters.items()
@@ -22,7 +25,10 @@ class FactorEngine:
             allowed_fields.add(spec.scope.group_field)
             if spec.scope.group_field == "industry_l1_code":
                 allowed_fields.add(FIELD_ALIASES["industry"])
-        context = DSLContext(indexed, values, spec.scope.min_group_size, allowed_fields)
+        context = DSLContext(
+            indexed, values, spec.scope.min_group_size, allowed_fields,
+            cross_section_mask=calculation_mask,
+        )
         evaluator = FormulaEvaluator(context)
         feature_lookbacks: dict[str, int] = {}
         for name, formula in spec.calculation.features.items():
@@ -38,6 +44,8 @@ class FactorEngine:
         factor = evaluator.evaluate(spec.calculation.formula)
         if spec.factor.direction == "negative":
             factor = -factor
+        if calculation_mask is not None:
+            factor = factor.where(calculation_mask)
         if spec.calculation.winsorize == "mad":
             factor = winsorize_mad(factor, spec.calculation.mad_scale)
         if spec.calculation.standardize == "zscore":
@@ -107,3 +115,5 @@ class FactorEngine:
             raise ContractError(
                 f"Panel is missing industry group field: {spec.scope.group_field}"
             )
+        if spec.scope.universe == "factor_eligible" and "is_factor_eligible" not in panel.columns:
+            raise ContractError("Panel is missing scope field: is_factor_eligible")

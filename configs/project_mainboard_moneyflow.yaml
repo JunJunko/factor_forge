@@ -1,0 +1,20 @@
+project_name: factor_forge_mainboard_moneyflow
+timezone: Asia/Shanghai
+paths:
+  data_root: data/mainboard_moneyflow
+  metadata_db: data/mainboard_moneyflow/metadata.sqlite3
+  artifacts_root: artifacts/runs
+data:
+  start_date: "20150101"
+  exchanges: [SSE, SZSE]
+  boards: [main]
+  include_moneyflow: true
+  industry_standard: SW2021
+  industry_level: L1
+  industry_min_group_size: 10
+  listing_age_days: 120
+  liquidity:
+    window: 20
+    min_avg_amount_cny: 30000000
+    min_traded_days: 18
+    max_participation_rate: 0.02

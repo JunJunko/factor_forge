@@ -1,0 +1,31 @@
+version: 1
+kind: factor
+factor:
+  name: smart_flow_crowding_interaction_v1
+  label: 异常主动流入与换手拥挤交互
+  description: 120日主动资金异常度与120日换手异常度的连续乘积。
+  hypothesis: 异常主动流入伴随极端换手时更像拥挤追涨，其未来收益应被削弱。
+  direction: negative
+  expected_shape: monotonic
+data:
+  frequency: daily
+  required_fields: [net_mf_amount_cny, amount, turnover_rate]
+  lookback_days: 119
+scope: {universe: factor_eligible, cross_section: market, point_in_time_required: true, min_group_size: 10}
+calculation:
+  parameters:
+    history_window: {value: 120, robustness_neighbors: []}
+  features:
+    flow_ratio: net_mf_amount_cny / (amount + 1.0)
+    flow_mean: mean(flow_ratio, history_window)
+    flow_std: std(flow_ratio, history_window)
+    flow_z: clip((flow_ratio - flow_mean) / (flow_std + 0.000001), lower=-5.0, upper=5.0)
+    turnover_mean: mean(turnover_rate, history_window)
+    turnover_std: std(turnover_rate, history_window)
+    turnover_z: clip((turnover_rate - turnover_mean) / (turnover_std + 0.000001), lower=-5.0, upper=5.0)
+  formula: flow_z * turnover_z
+  missing_policy: skip
+  winsorize: mad
+  mad_scale: 5.0
+  standardize: zscore
+output: {value_field: factor_value}

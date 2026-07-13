@@ -1,0 +1,20 @@
+version: 1
+name: order_size_m3_retail_continuation_discovery_v1
+project_config: configs/project_mainboard_moneyflow.yaml
+factor_config: configs/combinations/order_size_m3_retail_continuation_v1.yaml
+scoring_config: configs/contracts/alpha_scoring_v1.yaml
+backtest_contract: configs/contracts/backtest_contract_v1.yaml
+data_version: data_v1_20260713T004235Z_218530b2
+sample_start_date: "20160104"
+sample_end_date: "20211231"
+research_mode: exploratory
+stage_l1:
+  forward_horizons: [5]
+  quantile_groups: 5
+  min_cross_section: 100
+  universes: [liquid]
+  targets: [stock_minus_sw_l1_return]
+  primary_gate: {target: stock_minus_sw_l1_return, variant: industry_size_neutralized, universe: liquid, horizon: 5, metric: rank_ic, min_mean: -1.0, min_positive_ratio: 0.0, max_fdr_q: null, allow_top_tail_fallback: false}
+  conditional_ic: {enabled: false}
+stage_l2: {universes: [liquid], holding_periods: [5], top_n: [2, 5, 10, 20]}
+stage_l3: {enabled: false}

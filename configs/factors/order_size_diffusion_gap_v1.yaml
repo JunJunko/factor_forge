@@ -1,0 +1,37 @@
+version: 1
+kind: factor
+factor:
+  name: order_size_diffusion_gap_v1
+  label: 大单先行与小单跟随缺口
+  description: 严格滞后的三日大单异常均值减去当日小单资金异常度。
+  hypothesis: 大单已提前进入而小单尚未拥挤跟随的阶段存在未完全扩散的信息。
+  direction: positive
+  expected_shape: unknown
+data:
+  frequency: daily
+  required_fields: [buy_sm_amount_cny, sell_sm_amount_cny, buy_lg_amount_cny, sell_lg_amount_cny, buy_elg_amount_cny, sell_elg_amount_cny, amount]
+  lookback_days: 122
+scope: {universe: factor_eligible, cross_section: market, point_in_time_required: true, min_group_size: 10}
+calculation:
+  parameters:
+    history_window: {value: 120, robustness_neighbors: []}
+    lead_window: {value: 3, robustness_neighbors: []}
+  features:
+    large_net: buy_lg_amount_cny + buy_elg_amount_cny - sell_lg_amount_cny - sell_elg_amount_cny
+    large_ratio: large_net / (amount + 1.0)
+    large_mean: mean(large_ratio, history_window)
+    large_std: std(large_ratio, history_window)
+    large_z: clip((large_ratio - large_mean) / (large_std + 0.000001), lower=-5.0, upper=5.0)
+    prior_large_z: lag(large_z, 1)
+    large_lead: mean(prior_large_z, lead_window)
+    small_net: buy_sm_amount_cny - sell_sm_amount_cny
+    small_ratio: small_net / (amount + 1.0)
+    small_mean: mean(small_ratio, history_window)
+    small_std: std(small_ratio, history_window)
+    small_z: clip((small_ratio - small_mean) / (small_std + 0.000001), lower=-5.0, upper=5.0)
+  formula: large_lead - small_z
+  missing_policy: skip
+  winsorize: mad
+  mad_scale: 5.0
+  standardize: zscore
+output: {value_field: factor_value}

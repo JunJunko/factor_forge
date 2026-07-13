@@ -1,0 +1,21 @@
+version: 1
+name: turnover_abs_return_validation_market_v3
+project_config: configs/project.yaml
+factor_config: configs/factors/turnover_abs_return_continuation_v3.yaml
+scoring_config: configs/contracts/alpha_scoring_v1.yaml
+backtest_contract: configs/contracts/backtest_contract_v1.yaml
+data_version: data_v1_20260710T115133Z_208e9fc8
+sample_start_date: "20220101"
+sample_end_date: "20251231"
+research_mode: exploratory
+stage_l1:
+  forward_horizons: [5]
+  quantile_groups: 5
+  min_cross_section: 100
+  universes: [liquid]
+  targets: [stock_minus_sw_l1_return]
+  primary_gate: {target: stock_minus_sw_l1_return, variant: raw, universe: liquid, horizon: 5, metric: rank_ic, min_mean: 0.01, min_positive_ratio: 0.50, max_fdr_q: 0.10, allow_top_tail_fallback: false}
+  conditional_ic: {enabled: false}
+stage_l2: {universes: [liquid], holding_periods: [5], top_n: [2, 5, 10, 20]}
+stage_l3: {enabled: true}
+output: {store_trade_details: true, store_daily_positions: true, store_daily_factor_values: true, store_experiment_manifest: true}
