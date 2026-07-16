@@ -11,6 +11,8 @@ data/raw/
 data/curated/
 data/versions/
 data/staging/
+data/industry_rotation/
+data/concept_rotation/
 data/*.quality.json
 artifacts/runs/
 # Generated research, backtest, and model outputs

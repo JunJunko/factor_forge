@@ -1,0 +1,26 @@
+version: 1
+name: post_impulse_m21_compressed_reranker_v1
+source_run: artifacts/post_impulse_ml_runs/post_impulse_ml_0a0fefb3f32f3298
+project_config: configs/project.yaml
+purge_trading_days: 11
+ridge_alpha: 1000.0
+folds:
+  - {id: fold_2023, train_start: "2021-01-01", train_end: "2022-12-31", test_start: "2023-01-01", test_end: "2023-12-31"}
+  - {id: fold_2024, train_start: "2021-01-01", train_end: "2023-12-31", test_start: "2024-01-01", test_end: "2024-12-31"}
+  - {id: fold_2025, train_start: "2021-01-01", train_end: "2024-12-31", test_start: "2025-01-01", test_end: "2025-12-31"}
+  - {id: fold_2026h1, train_start: "2021-01-01", train_end: "2025-12-31", test_start: "2026-01-01", test_end: "2026-06-30"}
+top_n: [5, 10]
+cost_bps: [20.0, 40.0, 60.0]
+holding_days: 10
+initial_cash: 100000000
+lot_size: 100
+minimum_train_events: 300
+minimum_daily_events: 5
+gate:
+  primary_top_n: 5
+  primary_cost_bps: 40.0
+  minimum_positive_ic_folds: 3
+  minimum_positive_delta_years: 3
+  minimum_profitable_years: 3
+  maximum_drawdown: -0.35
+output_root: artifacts/post_impulse_m21_runs

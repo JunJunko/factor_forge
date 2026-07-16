@@ -121,6 +121,67 @@ class TushareTimingIngestor:
         (self.output_dir / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
         return TimingIngestResult(str(self.output_dir), start_date, end_date, files)
 
+    def repair_trade_date_table(
+        self,
+        *,
+        endpoint: str,
+        table_name: str,
+        start_date: str,
+        end_date: str,
+        **query_kwargs,
+    ) -> dict:
+        """Append only genuinely missing trading dates, bypassing an empty cache.
+
+        A failed endpoint request used to be cached as an empty date partition.
+        This bounded repair path queries those dates again and refuses to overwrite
+        any date already present in the consolidated raw table.
+        """
+        path = self.output_dir / f"{table_name}.parquet"
+        if not path.exists():
+            raise FileNotFoundError(f"cannot repair absent table: {path}")
+        current = pd.read_parquet(path)
+        if "trade_date" not in current:
+            raise ValueError(f"{path} has no trade_date column")
+        current_dates = set(pd.to_datetime(current["trade_date"], errors="coerce").dt.strftime("%Y%m%d"))
+        dates = self._trade_dates(start_date, end_date)
+        missing = [date for date in dates if date not in current_dates]
+        frames: list[pd.DataFrame] = []
+        staging = self.output_dir / "staging" / endpoint
+        staging.mkdir(parents=True, exist_ok=True)
+        for date in missing:
+            frame = self.provider.query(endpoint, trade_date=date, **query_kwargs)
+            if frame is None or frame.empty:
+                raise RuntimeError(f"repair query returned no {endpoint} rows for {date}")
+            if "trade_date" not in frame:
+                frame["trade_date"] = date
+            observed = set(frame["trade_date"].astype(str))
+            if observed != {date}:
+                raise ValueError(f"repair response date mismatch for {date}: {sorted(observed)}")
+            temporary = (staging / f"trade_date={date}.parquet").with_suffix(".parquet.tmp")
+            destination = staging / f"trade_date={date}.parquet"
+            frame.to_parquet(temporary, index=False)
+            temporary.replace(destination)
+            frames.append(frame)
+            if self.request_sleep > 0:
+                time.sleep(self.request_sleep)
+        if frames:
+            repaired = pd.concat([current, *frames], ignore_index=True)
+            key = [column for column in ("trade_date", "ts_code") if column in repaired]
+            if not key:
+                raise ValueError(f"no deduplication key for {table_name}")
+            repaired = repaired.drop_duplicates(key, keep="last").sort_values(key).reset_index(drop=True)
+            temporary = path.with_suffix(".parquet.tmp")
+            repaired.to_parquet(temporary, index=False)
+            temporary.replace(path)
+        return {
+            "table": table_name,
+            "endpoint": endpoint,
+            "missing_dates_requested": missing,
+            "dates_repaired": len(frames),
+            "rows_added": int(sum(len(frame) for frame in frames)),
+            "output_path": str(path),
+        }
+
     def _trade_dates(self, start_date: str, end_date: str) -> list[str]:
         calendar = self.provider.query("trade_cal", exchange="SSE", start_date=start_date, end_date=end_date)
         return calendar.loc[pd.to_numeric(calendar["is_open"], errors="coerce").eq(1), "cal_date"].astype(str).tolist()

@@ -1,0 +1,8 @@
+version: 1
+name: post_impulse_m3_diagnostic_v1
+source_run: artifacts/post_impulse_ml_runs/post_impulse_ml_0a0fefb3f32f3298
+ridge_alpha: 1000.0
+logistic_c: 1.0
+minimum_train_events: 300
+minimum_daily_events: 5
+output_root: artifacts/post_impulse_m3_runs

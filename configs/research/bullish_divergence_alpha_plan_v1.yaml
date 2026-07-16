@@ -1,0 +1,293 @@
+version: 1
+kind: conditional_alpha_ml_experiment_plan
+plan_id: bullish_divergence_regime_concept_momentum_v1
+name: bullish_divergence_alpha_plan_v1
+status: designed_not_run
+
+hypothesis:
+  statement: >-
+    A causal bullish-divergence event has stronger 10-day industry-neutral alpha when the
+    market is repairing, the stock's PIT concepts are improving with rising common-member
+    breadth, and stock momentum is in early recovery rather than continued deterioration
+    or overheat.
+  positive_condition: market_repair AND concept_improving_or_confirmed_leading AND stock_early_recovery
+  negative_control: market_retreat AND concept_weakening_or_lagging AND stock_momentum_deteriorating
+
+clocks:
+  feature_cutoff: signal_date_close_T
+  execution: next_tradeable_open_T_plus_1
+  primary_horizon_trading_days: 10
+  label_available_offset_days: 11
+  purge_days: 11
+  split: expanding_walk_forward
+
+universe:
+  market: A_share_main_chinext_star
+  min_listing_days: 60
+  exclude_st: true
+  exclude_delisting_period: true
+  exclude_suspended_at_signal: true
+  execution_handles_open_limit_lock: true
+
+divergence_event:
+  current_trough_window: 5
+  previous_trough_lookback: 60
+  minimum_trough_separation: 5
+  maximum_current_trough_age: 3
+  minimum_intervening_rebound_atr: 0.5
+  episode_cooldown_days: 10
+  primary_scale: 60
+  diagnostic_scales: [20, 40, 80]
+  score_range: [0, 100]
+  retain_atomic_features: true
+
+touch_factor:
+  anchor: current_divergence_trough_B
+  level_raw_field: touch__level_raw
+  level_raw_origin_field: touch__level_raw_origin
+  level_adjusted_pit_field: touch__level_adj_pit
+  lookback_days: 10
+  exclude_anchor_bar_B: true
+  zone_width:
+    atr_fraction: 0.15
+    minimum_ticks: 2
+  sensitivity_atr_fractions: [0.10, 0.25]
+  split_touch_counts_at_B: true
+  preserve_post_B_unobservable_as_nan: true
+
+feature_groups:
+  X_coordinates:
+    role: control
+    fields:
+      - industry_l1_code
+      - industry_l2_code
+      - log_circ_mv
+      - beta_20d
+      - beta_60d
+      - volatility_20d
+      - volatility_60d
+      - log_adv20
+      - turnover_level_20d
+      - listing_trade_days
+      - raw_close
+  D_divergence:
+    role: predictor
+    fields:
+      - div__price_lower_low_atr
+      - div__low_similarity_atr
+      - div__trough_gap_days
+      - div__intervening_rebound_atr
+      - div__b_age
+      - div__rsi6_higher_low
+      - div__rsi14_higher_low
+      - div__macd_hist_higher_low
+      - div__macd_slope_b
+      - div__ret5_higher_low
+      - div__downside_velocity_change
+      - div__down_volume_change
+      - div__turnover_change
+      - div__main_sell_ratio_change
+      - div__range_contraction
+      - div__natr_change
+      - div__close_location
+      - div__lower_shadow_atr
+      - div__reclaim_ma5_atr
+      - div__indicator_agreement_count
+      - div__history_valid_ratio
+      - div__score
+      - div__score_rank
+  T_touch_retest:
+    role: predictor_and_diagnostic
+    raw_price_fields_not_for_model:
+      - touch__level_raw
+      - touch__level_raw_origin
+      - touch__level_adj_pit
+    fields:
+      - touch__level_to_close
+      - touch__zone_width_atr
+      - touch__occurred_10d
+      - touch__count_10d
+      - touch__nearest_distance_atr_10d
+      - touch__age_days
+      - touch__pre_b_count
+      - touch__post_b_count
+      - touch__last_penetration_atr
+      - touch__last_close_reclaim_atr
+      - touch__post_touch_return_to_t
+      - touch__false_break_reclaim
+      - touch__post_b_observable
+      - touch__acceptance_score
+  R_regime:
+    role: predictor
+    fields:
+      - regime__index_ret_5d
+      - regime__index_ret_20d
+      - regime__index_ret_60d
+      - regime__index_drawdown_60d
+      - regime__index_vol_20d
+      - regime__downside_vol_20d
+      - regime__market_breadth
+      - regime__breadth_delta_5d
+      - regime__breadth_thrust
+      - regime__cross_section_dispersion
+      - regime__amount_ratio_5_20
+      - regime__small_minus_large_10d
+      - regime__limit_up_ratio
+      - regime__limit_down_ratio
+      - regime__p_state_0
+      - regime__p_state_1
+      - regime__p_state_2
+      - regime__state_entropy
+      - regime__state_age
+      - regime__p_risk_on_change_5d
+      - regime__rule_repair
+      - regime__rule_overheat
+      - regime__rule_retreat
+      - regime__rule_divergence
+  C_concept_rotation:
+    role: predictor
+    membership_clock: point_in_time_daily_snapshot
+    aggregation: [best, top3_mean, support_count, dispersion, primary_dehubbed]
+    fields:
+      - concept__return_5d
+      - concept__return_20d
+      - concept__return_60d
+      - concept__rs_20d
+      - concept__rs_momentum_5d
+      - concept__breadth_float
+      - concept__breadth_delta_5d
+      - concept__common_breadth_delta_smooth5
+      - concept__membership_churn_5d
+      - concept__leading_age
+      - concept__rotation_amount_rank
+      - concept__support_improving_count
+      - concept__support_leading_count
+      - concept__membership_degree
+  M_stock_momentum:
+    role: predictor
+    fields:
+      - momentum__ret_1d
+      - momentum__ret_3d
+      - momentum__ret_5d
+      - momentum__ret_10d
+      - momentum__ret_20d
+      - momentum__ret_60d
+      - momentum__ret_120d
+      - momentum__industry_excess_5d
+      - momentum__industry_excess_20d
+      - momentum__concept_excess_5d
+      - momentum__concept_excess_20d
+      - momentum__acceleration_5_20
+      - momentum__acceleration_10_60
+      - momentum__distance_ma5_atr
+      - momentum__distance_ma20_atr
+      - momentum__distance_ma60_atr
+      - momentum__distance_high60_atr
+      - momentum__drawdown_60d
+      - momentum__amount_ratio_5_20
+      - momentum__turnover_delta_5d
+      - momentum__early_recovery_strength
+  I_preregistered_interactions:
+    role: predictor
+    fields:
+      - interaction__div_x_regime_repair_probability
+      - interaction__div_x_market_breadth_delta
+      - interaction__div_x_concept_rs_momentum
+      - interaction__div_x_concept_common_breadth
+      - interaction__div_x_stock_momentum_acceleration
+      - interaction__div_x_early_recovery
+      - interaction__concept_x_stock_relative_momentum
+      - interaction__concept_breadth_x_stock_amount_activation
+
+non_predictors:
+  keys: [trade_date, ts_code, event_id, episode_id]
+  diagnostics: [concept_code, concept_name, regime_hard_state, stock_momentum_state]
+  filters: [is_tradeable, is_st, is_suspended, is_limit_up_open, is_limit_down_open]
+  forbidden_prefixes: [label__, forward__, mfe__, mae__]
+  forbidden_entity_features: [ts_code, concept_code, concept_name]
+
+labels:
+  primary: label__industry_excess_10d
+  secondary:
+    - label__industry_excess_5d
+    - label__industry_excess_20d
+    - label__concept_excess_10d
+    - label__quality_atr_10d
+    - label__success_10d
+  entry_price: adjusted_open_T_plus_1
+  exit_price: adjusted_open_T_plus_horizon_plus_1
+  benchmark: sw_l1_leave_one_out
+  classification_cost_bps: 40
+  success_max_mae_atr: -1.5
+
+experiments:
+  - {id: E0, design: pit_data_and_prefix_invariance_gate}
+  - {id: E1, design: matched_event_study, controls: [trade_date, industry_l1_code, ret_5d, ret_20d, drawdown_60d, log_circ_mv, volatility_20d, log_adv20, turnover_level_20d, beta_60d], neighbors: 3}
+  - {id: E1_1, design: fixed_event_pool_touch_incremental_test, compare: [M1a, M1b]}
+  - {id: E2, design: fixed_conditional_matrix, dimensions: [divergence_score_quintile, market_regime, concept_lifecycle, stock_momentum_state]}
+  - {id: E3, design: fixed_sample_ml_ablation}
+  - {id: E4, design: executable_oof_portfolio_backtest}
+
+ablations:
+  M0: [X_coordinates]
+  M1a: [X_coordinates, D_divergence]
+  M1b: [X_coordinates, D_divergence, T_touch_retest]
+  M2: [X_coordinates, D_divergence, T_touch_retest, R_regime]
+  M3: [X_coordinates, D_divergence, T_touch_retest, C_concept_rotation]
+  M4: [X_coordinates, D_divergence, T_touch_retest, M_stock_momentum]
+  M5: [X_coordinates, D_divergence, T_touch_retest, R_regime, C_concept_rotation, M_stock_momentum]
+  M6: [X_coordinates, D_divergence, T_touch_retest, R_regime, C_concept_rotation, M_stock_momentum, I_preregistered_interactions]
+
+models:
+  algorithms:
+    - ridge_regression
+    - logistic_regression
+    - lightgbm_regression
+    - lightgbm_lambdarank_by_signal_date
+  tuning_policy: fixed_small_grid_train_validation_only
+  concept_model_initial_blend_weight: 0.20
+  sample_weight: inverse_events_per_signal_date
+  prediction_outputs: [full_score, risk_residualized_score]
+
+portfolio:
+  primary: {top_n: 10, holding_days: 10, roundtrip_cost_bps: 40}
+  sensitivity:
+    top_n: [5, 20]
+    holding_days: [5, 20]
+    roundtrip_cost_bps: [20, 60]
+  staggered_sleeves: 10
+  max_stock_weight: 0.10
+  max_industry_weight: 0.25
+  maximum_adv20_participation: 0.05
+  lot_size: 100
+  enforce_limit_and_suspension_constraints: true
+
+placebos:
+  - within_date_divergence_score_shuffle
+  - membership_shuffle_preserve_daily_concept_size
+  - latest_membership_backfill_lookahead
+  - weakening_lagging_concept_substitution
+  - signal_date_shift_plus_minus_20d
+
+gates:
+  require_e1_monotonic_quintiles: true
+  e1_q5_minus_q1_block_bootstrap_90pct_ci_lower_gt: 0.0
+  m1b_vs_m1a_touch_increment_positive: true
+  m1b_secondary_metric_not_significantly_worse: true
+  m5_or_m6_vs_m1b_positive_delta_rank_ic: true
+  minimum_same_direction_folds: 3
+  assumed_fold_count: 4
+  primary_40bps_net_excess_gt: 0.0
+  minimum_period_win_share: 0.60
+  stress_60bps_positive: true
+  positive_after_remove_best_1pct_events: true
+  positive_after_remove_best_month: true
+  maximum_single_industry_concept_or_stock_contribution_share: 0.30
+  placebo_must_not_match_primary: true
+  concept_result_status_until_unseen_confirmation: shadow_only
+  minimum_unseen_observation_months: 6
+
+failure_policy:
+  do_not_retune_same_trial: true
+  changes_require_new_hypothesis_version: true
+  stop_if_divergence_itself_fails_E1: true

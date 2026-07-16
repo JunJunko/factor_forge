@@ -1,0 +1,16 @@
+version: 1
+name: post_impulse_m2_path_v1
+score_run: artifacts/post_impulse_m21_runs/post_impulse_m21_780745ad924bfa1a
+event_run: artifacts/post_impulse_ml_runs/post_impulse_ml_0a0fefb3f32f3298
+project_config: configs/project.yaml
+horizons: [1, 2, 3, 5, 7, 10]
+top_n: 5
+cost_bps: [20.0, 40.0, 60.0]
+gate:
+  primary_pair: raw_pressure_vs_event
+  primary_cost_bps: 40.0
+  minimum_positive_folds: 3
+  minimum_positive_years: 3
+  trim_best_fraction: 0.01
+  require_adjacent_support: true
+output_root: artifacts/post_impulse_m2_path_runs

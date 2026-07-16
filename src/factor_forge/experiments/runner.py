@@ -29,6 +29,12 @@ def industry_slice_enabled(experiment) -> bool:
 
 
 class ExperimentRunner:
+    @staticmethod
+    def _progress(run_id: str, stage: str, detail: str = "") -> None:
+        timestamp = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        suffix = f" {detail}" if detail else ""
+        print(f"[{timestamp}] {run_id} {stage}{suffix}", flush=True)
+
     def run(
         self,
         experiment_path: str | Path,
@@ -129,10 +135,12 @@ class ExperimentRunner:
                 stored_multiplier,
             )
         artifacts.json("manifest.json", manifest)
+        self._progress(run_id, "START", f"data_version={data_version}")
         scorer = AlphaScorer(scoring_raw)
         try:
             combination_result = None
             if combination_spec:
+                self._progress(run_id, "FACTOR_COMBINATION_START")
                 requested = set(experiment.stage_l1.universes) | set(experiment.stage_l2.universes)
                 # Factor calculation uses the PIT factor-eligible universe. The
                 # requested tradeable/liquid universes belong to evaluation and
@@ -151,8 +159,11 @@ class ExperimentRunner:
                 artifacts.json("combination_cache_status.json", combination_result.cache_status)
                 artifacts.json("combination_normalization_issues.json", combination_result.normalization_issues)
                 manifest["factor_source_kind"] = "factor_combination"
+                self._progress(run_id, "FACTOR_COMBINATION_DONE")
             else:
+                self._progress(run_id, "FACTOR_COMPUTE_START")
                 factor_values = FactorEngine().compute(panel, factor)
+                self._progress(run_id, "FACTOR_COMPUTE_DONE")
             if combination_spec:
                 audit_compute = lambda prefix: FactorCombinationEngine().run(
                     prefix, factor_path,
@@ -160,9 +171,11 @@ class ExperimentRunner:
                 ).factor_values
             else:
                 audit_compute = lambda prefix: FactorEngine().compute(prefix, factor)
+            self._progress(run_id, "TEMPORAL_AUDIT_START")
             temporal_audit = FactorEngine.audit_temporal_consistency(
                 panel, factor_values, audit_compute
             )
+            self._progress(run_id, "TEMPORAL_AUDIT_DONE")
             conditioning_values = None
             conditioning_name = None
             conditioning_audit = None
@@ -226,10 +239,12 @@ class ExperimentRunner:
                 if conditioning_path is not None:
                     artifacts.parquet("conditioning_factor_values.parquet", conditioning_values)
             artifacts.parquet("factor_values.parquet", factor_values)
+            self._progress(run_id, "L0_START")
             l0 = evaluate_factor_quality(
                 panel, factor_values, factor, experiment.stage_l0, temporal_audit=temporal_audit
             )
             artifacts.json("l0_quality.json", l0)
+            self._progress(run_id, "L0_DONE", f"passed={l0['passed']}")
             if not l0["passed"]:
                 l1 = {"passed": False, "gate_paths": {}, "results": []}
                 assessment = scorer.score(factor, l0, l1, [])
@@ -242,6 +257,7 @@ class ExperimentRunner:
                 assessment["invalid_reason"] = "INVALID_DATA_COVERAGE"
                 assessment["hard_flags"]["data_coverage"] = True
                 return self._finish(artifacts, manifest, assessment, l0, l1, [], started, "INVALID_DATA_COVERAGE")
+            self._progress(run_id, "L1_START")
             l1 = evaluate_predictive_power(panel, factor_values, factor, experiment.stage_l1)
             daily_rank_ic = l1.pop("daily_rank_ic", [])
             if daily_rank_ic:
@@ -260,7 +276,9 @@ class ExperimentRunner:
                 if conditional_config.store_daily_ic:
                     artifacts.parquet("l1_conditional_ic_daily.parquet", conditional_daily)
             artifacts.json("l1_predictive_power.json", l1)
+            self._progress(run_id, "L1_DONE", f"passed={l1['passed']}")
             if combination_result:
+                self._progress(run_id, "COMBINATION_DIAGNOSTICS_START")
                 diagnostics = CombinationDiagnostics().run(
                     panel, factor, experiment, combination_result, main_l1=l1
                 )
@@ -268,6 +286,7 @@ class ExperimentRunner:
                     artifacts.csv(filename, frame)
                 artifacts.text("factor_combination_report.md", diagnostics.report)
                 manifest["leakage_checks"] = diagnostics.leakage_checks
+                self._progress(run_id, "COMBINATION_DIAGNOSTICS_DONE")
                 if not all(diagnostics.leakage_checks.values()):
                     assessment = scorer.score(factor, l0, l1, [])
                     assessment["classification"] = "INVALID"
@@ -347,10 +366,21 @@ class ExperimentRunner:
             l2_rows = []
             engine = BacktestEngine()
             combinations = 0
+            total_combinations = (
+                len(experiment.stage_l2.universes)
+                * len(experiment.stage_l2.top_n)
+                * len(experiment.stage_l2.holding_periods)
+                * len(experiment.stage_l2.cost_scenarios_bps)
+            )
+            self._progress(run_id, "L2_START", f"combinations={total_combinations}")
             for universe in experiment.stage_l2.universes:
                 for top_n in experiment.stage_l2.top_n:
                     for holding in experiment.stage_l2.holding_periods:
                         for cost in experiment.stage_l2.cost_scenarios_bps:
+                            self._progress(
+                                run_id, "L2_COMBINATION_START",
+                                f"index={combinations + 1}/{total_combinations} universe={universe} top_n={top_n} holding={holding} cost_bps={cost}",
+                            )
                             result = engine.run(
                                 panel, factor_values, universe=universe, top_n=top_n,
                                 holding_days=holding, initial_cash=experiment.stage_l2.initial_cash,
@@ -382,6 +412,10 @@ class ExperimentRunner:
                                 if condition_filter.enabled else None,
                             })
                             combinations += 1
+                            self._progress(
+                                run_id, "L2_COMBINATION_DONE",
+                                f"index={combinations}/{total_combinations}",
+                            )
             manifest["selection_metadata"]["total_combinations_tested"] = combinations
             manifest["stage_l3_ran"] = bool(experiment.stage_l3.enabled and any(
                 row["cost_bps"] == 20 and row["metrics"]["annualized_excess_return"] > 0
@@ -394,7 +428,18 @@ class ExperimentRunner:
             assessment = scorer.score(factor, l0, l1, l2_rows)
             compact_l2 = [{k: v for k, v in row.items() if k not in {"daily", "positions"}} for row in l2_rows]
             artifacts.json("l2_summary.json", compact_l2)
+            self._progress(run_id, "L2_DONE", f"combinations={combinations}")
             return self._finish(artifacts, manifest, assessment, l0, l1, compact_l2, started, "SUCCESS")
+        except KeyboardInterrupt:
+            manifest.update({
+                "status": "ABORTED",
+                "finished_at": datetime.now(timezone.utc).isoformat(),
+                "error": "KeyboardInterrupt",
+            })
+            artifacts.json("manifest.json", manifest)
+            artifacts.text("error.log", "Experiment interrupted by KeyboardInterrupt\n")
+            self._progress(run_id, "ABORTED", "KeyboardInterrupt")
+            raise
         except Exception as exc:
             manifest.update({"status": "FAILED", "finished_at": datetime.now(timezone.utc).isoformat(), "error": str(exc)})
             artifacts.json("manifest.json", manifest)
@@ -408,6 +453,7 @@ class ExperimentRunner:
                          "elapsed_seconds": (finished - started).total_seconds()})
         artifacts.json("alpha_assessment.json", assessment)
         artifacts.json("manifest.json", manifest)
+        ExperimentRunner._progress(manifest["run_id"], "FINISH", f"status={status}")
         report = (
             f"# Factor Forge 实验报告\n\n"
             f"- Run ID: `{manifest['run_id']}`\n"

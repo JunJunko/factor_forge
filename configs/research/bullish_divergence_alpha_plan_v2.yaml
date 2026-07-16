@@ -1,0 +1,81 @@
+version: 2
+kind: corrected_mechanism_event_study
+plan_id: bullish_divergence_mechanism_aligned_v2
+status: diagnostic_on_inspected_history
+
+research_status:
+  historical_data_through: 2026-07-10
+  authorization: diagnostic_and_shadow_only
+  reason: v2 was designed after inspecting v1 results
+
+event:
+  previous_trough_lookback: 60
+  minimum_trough_separation: 20
+  maximum_current_trough_age: 3
+  lower_low_eligibility_atr: [-0.25, 1.00]
+  minimum_intervening_rebound_atr: 0.50
+  require_negative_3d_return_into_a: true
+  require_negative_3d_return_into_b: true
+  episode_cooldown_days: 10
+
+score:
+  exclude:
+    - trough_gap_days
+    - reliability_multiplier
+    - lower_low_depth_reward
+    - intervening_rebound_reward
+  oscillator_strength:
+    transform: maximum_of_separately_ranked_components
+    components:
+      - rsi14_higher_low
+      - macd_hist_higher_low_divided_by_atr_a
+      - downside_velocity_change
+  confirmation_strength:
+    transform: mean_of_separately_ranked_components
+    components:
+      - close_location
+      - lower_shadow_atr
+      - negative_down_volume_change
+  weights:
+    oscillator_strength: 0.75
+    confirmation_strength: 0.25
+
+primary_comparator:
+  name: same_date_same_industry_price_geometry_placebo
+  controls:
+    geometry_candidate: true
+    oscillator_improvement: false
+  neighbors: 3
+  caliper: 3.0
+  balance_gate_max_abs_smd: 0.20
+
+touch_clocks:
+  historical_support:
+    clock: origin_divergence_close
+    field: support_v2__pre_b_present
+  post_signal_retest:
+    clock: first_touch_after_origin_signal_close
+    horizon_trading_days: 10
+    execution: next_open_after_retest
+    states:
+      - no_reclaim
+      - reclaim
+      - false_break_reclaim
+
+inference:
+  score_quintiles: within_event_pool_within_signal_date
+  date_weighting: equal
+  contrasts: same_date_complete_case_only
+  bootstrap: moving_date_block
+  block_length: 10
+  confidence_interval: 90pct
+
+gate:
+  minimum_match_rate: 0.70
+  maximum_absolute_smd: 0.20
+  q5_minus_q1_estimate_gt: 0.0
+  q5_minus_q1_ci_low_gt: 0.0
+  overall_geometry_placebo_effect_gt: 0.0
+  next_step_if_pass: conditional_regime_concept_momentum_matrix_diagnostic
+  next_step_if_fail: stop_or_register_v3
+

@@ -54,6 +54,7 @@ class BacktestEngine:
         market_benchmark: pd.DataFrame | None = None,
         selection_membership: pd.DataFrame | None = None,
         position_multiplier: pd.Series | dict[pd.Timestamp, float] | None = None,
+        fully_invest_selected: bool = False,
     ) -> BacktestResult:
         data = panel.merge(
             factor_values[["trade_date", "ts_code", "factor_value"]],
@@ -141,10 +142,13 @@ class BacktestEngine:
                             multiplier = float(position_multiplier.get(date, 1.0))
                         multiplier = float(np.clip(multiplier, 0.0, 1.0))
                     deployable_cash = sleeve.cash * multiplier
-                    target = deployable_cash / top_n if top_n else 0.0
-                    for ts_code in candidates.index:
-                        if not self._can_buy(today, ts_code, constraints):
-                            continue
+                    buyable = [
+                        ts_code for ts_code in candidates.index
+                        if self._can_buy(today, ts_code, constraints)
+                    ]
+                    allocation_count = len(buyable) if fully_invest_selected else top_n
+                    target = deployable_cash / allocation_count if allocation_count else 0.0
+                    for ts_code in buyable:
                         row = today.loc[ts_code]
                         if isinstance(row, pd.DataFrame):
                             row = row.iloc[0]

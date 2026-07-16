@@ -1,0 +1,25 @@
+version: 1
+name: post_impulse_sell_absorption_v1
+project_config: configs/project.yaml
+data_version: data_v1_20260710T115133Z_208e9fc8
+history_start_date: "2019-01-01"
+sample_start_date: "2021-01-01"
+features:
+  history_window: 252
+  atr_window: 20
+  impulse_return_window: 3
+  impulse_percentile: 0.90
+  industry_percentile: 0.80
+  observation_days: 3
+  event_cooldown_days: 5
+  process_window: 3
+  forward_horizon: 10
+  min_listing_days: 60
+segments:
+  discovery: {start: "2021-01-01", end: "2023-12-31"}
+  validation: {start: "2024-01-01", end: "2024-12-31"}
+  held_out: {start: "2025-01-01", end: "2026-07-10"}
+output_root: artifacts/absorption_continuation_runs
+minimum_daily_events: 5
+# Keep 2025+ sealed for the first mechanism decision.
+inspect_held_out: false

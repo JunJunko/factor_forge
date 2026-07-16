@@ -25,6 +25,7 @@ class StableFactorSelectionConfig(StrictModel):
     feature_names_path: Path | None = None
     output_root: Path = Path("artifacts/timing_stable_factors")
     start_date: str = "2023-04-18"
+    selection_end_date: str | None = None
     label_column: str = "label_10d_excess_return"
     regime_method: Literal["hmm", "gmm"] = "hmm"
     n_components: int = Field(default=3, ge=2, le=5)
@@ -72,6 +73,11 @@ class StableFactorSelectionRunner:
         helper = TimingRegimeRunner()
         base_cfg = self._regime_config(cfg)
         dataset, feature_names = helper._load_dataset(base_cfg)
+        if cfg.selection_end_date is not None:
+            cutoff = pd.Timestamp(cfg.selection_end_date)
+            dataset = dataset.loc[pd.to_datetime(dataset["trade_date"]) <= cutoff].copy()
+            if len(dataset) < cfg.history_days + cfg.min_regime_observations:
+                raise ValueError("selection_end_date leaves too few observations for stable-factor selection")
         regime_features = [column for column in cfg.regime_features if column in dataset.columns]
         factors = self._diagnostic_features(dataset, feature_names, cfg, regime_features)
         seed_ic_frames: list[pd.DataFrame] = []

@@ -1,0 +1,38 @@
+version: 1
+name: post_impulse_m3_minimal_walkforward_v1
+source_run: artifacts/post_impulse_ml_runs/post_impulse_ml_0a0fefb3f32f3298
+project_config: configs/project.yaml
+purge_trading_days: 11
+logistic_c: 1.0
+calibration_bins: 5
+minimum_train_events: 300
+minimum_daily_events: 5
+folds:
+  - id: fold_2023
+    train_start: "2021-01-01"
+    train_end: "2022-12-31"
+    test_start: "2023-01-01"
+    test_end: "2023-12-31"
+  - id: fold_2024
+    train_start: "2021-01-01"
+    train_end: "2023-12-31"
+    test_start: "2024-01-01"
+    test_end: "2024-12-31"
+  - id: fold_2025
+    train_start: "2021-01-01"
+    train_end: "2024-12-31"
+    test_start: "2025-01-01"
+    test_end: "2025-12-31"
+  - id: fold_2026h1
+    train_start: "2021-01-01"
+    train_end: "2025-12-31"
+    test_start: "2026-01-01"
+    test_end: "2026-06-30"
+gate:
+  minimum_positive_folds: 3
+  minimum_oof_delta_rank_ic: 0.005
+  minimum_sign_consistent_folds: 3
+  require_nonnegative_auc_delta: true
+  require_nonpositive_brier_delta: true
+  require_positive_top_bottom_delta: true
+output_root: artifacts/post_impulse_m3_walkforward_runs

@@ -1,0 +1,54 @@
+version: 2
+kind: alpha_research_plan
+plan_id: plan_order_size_flow_diffusion_v2
+idea_id: idea_order_size_diffusion_v1
+family_id: order_size_flow_diffusion_exhaustion
+name: order_size_flow_diffusion_plan_v2
+status: frozen_after_observability_revision
+supersedes: plan_order_size_flow_diffusion_v1
+source_plan: configs/research/order_size_flow_diffusion_plan_v1.yaml
+
+revision:
+  decision_id: decision_order_size_m0_observability_revision_v1
+  action: revise_one_hypothesis
+  reason: M0 was externally interrupted after L1 because the long L2 run had no progress output.
+  changes:
+    - deterministic_stage_progress_output
+    - per_l2_combination_start_and_done_output
+    - keyboard_interrupt_terminal_manifest
+  unchanged:
+    - hypothesis
+    - frozen_data_version
+    - factor_and_combination_configs
+    - experiment_configs
+    - sample_period
+    - primary_metric_and_gate
+
+frozen_data_version: data_v1_20260713T004235Z_218530b2
+primary_metric:
+  id: m2_increment_over_m0_liquid_industry_relative_5d_rank_ic
+  selector: {target: stock_minus_sw_l1_return, variant: industry_size_neutralized, universe: liquid, horizon: 5}
+  gate: {m2_min_mean: 0.01, m2_min_positive_ratio: 0.50, m2_max_fdr_q: 0.10, paired_m2_minus_m0_mean_gt: 0.0}
+
+trials_already_consumed:
+  - id: trial_order_size_m0_interrupted_v1
+    external_run_id: order_size_m0_baseline_v1__20260713T004520Z__752ed4b6
+    status: FAILED
+    reason: externally_interrupted_after_l1_without_progress_output
+
+remaining_trials:
+  - {order: 1, id: trial_order_size_m0_discovery_v2, data_role: discovery, experiment_config: configs/experiments/order_size_m0_baseline_discovery_v1.yaml, role: diagnostic_baseline}
+  - {order: 2, id: trial_order_size_m1_discovery_v1, data_role: discovery, experiment_config: configs/experiments/order_size_m1_large_lead_discovery_v1.yaml, role: large_lead_descriptor}
+  - {order: 3, id: trial_order_size_m2_discovery_v1, data_role: discovery, experiment_config: configs/experiments/order_size_m2_diffusion_discovery_v1.yaml, role: exact_primary_diffusion_gate}
+
+deferred_due_to_budget:
+  - {id: trial_order_size_m3_discovery_v1, reason: The interrupted M0 attempt consumed the fourth Idea trial; the competing retail-continuation diagnostic is deferred.}
+
+execution_policy:
+  experiment_execution_authorized: true
+  execute_in_order: true
+  stop_on_primary_gate_failure: true
+  current_action: rerun_m0_with_progress_output
+
+budgets:
+  idea: {max_trials: 4, trials_used: 1, trials_remaining: 3, max_revisions: 1, revisions_used: 1, max_validation_peeks: 2, validation_peeks_used: 0}

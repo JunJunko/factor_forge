@@ -1,0 +1,33 @@
+version: 1
+name: timing_stable_factors_oos_2025_v1
+dataset_path: artifacts/timing_features/timing_factor_library_v1_20260714T131445Z_d4522a5b/timing_dataset.parquet
+feature_names_path: artifacts/timing_features/timing_factor_library_v1_20260714T131445Z_d4522a5b/feature_names.json
+output_root: artifacts/timing_stable_factors
+start_date: "2021-01-01"
+# Purged before the 2025 test interval so a 10-day label cannot reach into it.
+selection_end_date: "2024-12-13"
+label_column: label_10d_excess_return
+regime_method: hmm
+n_components: 3
+history_days: 252
+random_states: [11, 42, 73]
+min_regime_observations: 80
+min_seed_support: 2
+min_mean_abs_rank_ic: 0.10
+max_pairwise_corr: 0.85
+max_selected_per_group: 3
+max_selected_total: 30
+regime_features:
+  - index_ret_20d
+  - index_ret_60d
+  - index_vol_20d
+  - index_drawdown_60d
+  - up_ratio
+  - rzmre_ratio
+  - put_call_log
+  - iv_atm
+  - fut_near_basis_ann
+  - fut_ls_log
+  - pmi
+  - epu_log
+exclude_patterns: ["_low_", "_high_", "label_", "state_probability_"]

@@ -112,3 +112,26 @@ def test_condition_membership_filters_selection_and_becomes_primary_benchmark():
     assert day_three["benchmark_return"] == pytest.approx(-0.5)
     assert day_three["universe_benchmark_return"] == pytest.approx(0.25)
     assert result.metrics["benchmark_scope"] == "condition_equal_weight"
+
+
+def test_fully_invest_selected_reallocates_when_candidates_are_below_top_n():
+    rows = []
+    for code in ["A.SZ", "B.SZ"]:
+        stock = one_stock_panel([10.0, 10.0, 10.0])
+        stock["ts_code"] = code
+        rows.append(stock)
+    panel = pd.concat(rows, ignore_index=True)
+    factor = panel[["trade_date", "ts_code"]].copy()
+    factor["factor_value"] = 1.0
+    result = BacktestEngine().run(
+        panel, factor, universe="liquid", top_n=4, holding_days=1,
+        initial_cash=100_000, lot_size=100,
+        constraints=ExecutionConstraints(min_listing_days=60),
+        cost_model=CostModel(commission_bps_per_side=0, slippage_bps_per_side=0,
+                             stamp_duty_bps_sell=0),
+        cost_scenario_bps=0, fully_invest_selected=True,
+    )
+    buys = result.trades[result.trades.side == "BUY"]
+    first_batch = buys.loc[buys.trade_date.eq(pd.Timestamp("2024-01-03"))]
+    assert len(first_batch) == 2
+    assert first_batch["gross_value"].sum() == pytest.approx(100_000)

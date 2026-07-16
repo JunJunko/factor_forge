@@ -416,6 +416,60 @@ def event_episode_run(path: Path):
     typer.echo(json.dumps(result, ensure_ascii=False, indent=2, default=json_default))
 
 
+@ml_app.command("post-impulse-run")
+def post_impulse_run(path: Path):
+    """Build PIT post-impulse path features and run fixed ML block ablations."""
+    from factor_forge.ml.post_impulse_runner import PostImpulseMLRunner
+
+    result = PostImpulseMLRunner().run(path)
+    typer.echo(json.dumps(result, ensure_ascii=False, indent=2, default=json_default))
+
+
+@ml_app.command("post-impulse-m3")
+def post_impulse_m3(path: Path):
+    """Diagnose fixed M3 absorption sub-blocks against the common M2 sample."""
+    from factor_forge.ml.post_impulse_m3 import PostImpulseM3DiagnosticRunner
+
+    result = PostImpulseM3DiagnosticRunner().run(path)
+    typer.echo(json.dumps(result, ensure_ascii=False, indent=2, default=json_default))
+
+
+@ml_app.command("post-impulse-m3-walkforward")
+def post_impulse_m3_walkforward(path: Path):
+    """Run the frozen four-fold OOF minimal-M3 classifier comparison."""
+    from factor_forge.ml.post_impulse_m3_walkforward import PostImpulseM3WalkForwardRunner
+
+    result = PostImpulseM3WalkForwardRunner().run(path)
+    typer.echo(json.dumps(result, ensure_ascii=False, indent=2, default=json_default))
+
+
+@ml_app.command("post-impulse-m2-backtest")
+def post_impulse_m2_backtest(path: Path):
+    """Run the frozen M1/M2 OOF Ridge comparison and executable backtest."""
+    from factor_forge.ml.post_impulse_m2_walkforward import PostImpulseM2WalkForwardRunner
+
+    result = PostImpulseM2WalkForwardRunner().run(path)
+    typer.echo(json.dumps(result, ensure_ascii=False, indent=2, default=json_default))
+
+
+@ml_app.command("post-impulse-m21")
+def post_impulse_m21(path: Path):
+    """Run the compressed-pressure reranker and corrected cohort backtest."""
+    from factor_forge.ml.post_impulse_m21 import PostImpulseM21Runner
+
+    result = PostImpulseM21Runner().run(path)
+    typer.echo(json.dumps(result, ensure_ascii=False, indent=2, default=json_default))
+
+
+@ml_app.command("post-impulse-m2-path")
+def post_impulse_m2_path(path: Path):
+    """Trace OOF Top-5 pressure reranking through fixed executable exit horizons."""
+    from factor_forge.ml.post_impulse_path import PostImpulseM2PathRunner
+
+    result = PostImpulseM2PathRunner().run(path)
+    typer.echo(json.dumps(result, ensure_ascii=False, indent=2, default=json_default))
+
+
 @ml_app.command("event-episode-oos")
 def event_episode_oos(
     run_dir: Path = typer.Option(..., "--run-dir"),

@@ -1,0 +1,16 @@
+version: 1
+name: post_impulse_composition_ridge_v1
+source_run: artifacts/absorption_continuation_runs/absorption_20260714T124515Z_eb5715ea6e
+project_config: configs/project.yaml
+data_version: data_v1_20260710T115133Z_208e9fc8
+train: {start: "2021-01-01", end: "2023-12-31"}
+selection: {start: "2024-01-01", end: "2024-12-31"}
+# This run deliberately opens the formerly held-out interval, as requested.
+test: {start: "2025-01-01", end: "2026-06-30"}
+ridge_alphas: [10.0, 100.0, 1000.0, 3000.0]
+top_n: [5, 10, 20]
+holding_days: 10
+cost_bps: 20
+initial_cash: 1000000
+lot_size: 100
+output_root: artifacts/absorption_composition_runs
