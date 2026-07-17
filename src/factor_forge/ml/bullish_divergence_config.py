@@ -13,6 +13,7 @@ class BullishDivergenceFeatureConfig:
     maximum_current_trough_age: int = 3
     minimum_intervening_rebound_atr: float = 0.5
     lower_low_tolerance_atr: float = 0.25
+    maximum_lower_low_atr: float = 1.0
     atr_window: int = 20
     rsi_fast_window: int = 6
     rsi_slow_window: int = 14
@@ -29,6 +30,8 @@ class BullishDivergenceFeatureConfig:
             raise ValueError("current_trough_window must be at least 2")
         if self.previous_trough_lookback <= self.minimum_trough_separation:
             raise ValueError("previous_trough_lookback must exceed minimum_trough_separation")
+        if self.maximum_lower_low_atr <= -self.lower_low_tolerance_atr:
+            raise ValueError("lower-low eligibility band is invalid")
         if not 0 <= self.maximum_current_trough_age < self.current_trough_window:
             raise ValueError("maximum_current_trough_age must be inside the current trough window")
         if self.atr_window < 2 or self.rsi_fast_window < 2 or self.rsi_slow_window < 2:
@@ -41,4 +44,3 @@ class BullishDivergenceFeatureConfig:
             raise ValueError("tick_size must be positive")
         if not 0 < self.minimum_history_valid_ratio <= 1:
             raise ValueError("minimum_history_valid_ratio must be in (0, 1]")
-

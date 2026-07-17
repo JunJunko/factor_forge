@@ -150,6 +150,8 @@ def render_report(summary, origin, retest) -> str:
 
 
 def json_default(value):
+    if isinstance(value, (np.bool_,)):
+        return bool(value)
     if isinstance(value, (np.integer,)):
         return int(value)
     if isinstance(value, (np.floating,)):
@@ -183,4 +185,3 @@ def parse_args() -> argparse.Namespace:
 
 if __name__ == "__main__":
     main()
-

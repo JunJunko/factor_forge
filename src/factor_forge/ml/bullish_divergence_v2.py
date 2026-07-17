@@ -71,6 +71,8 @@ def v2_base_feature_config(
         previous_trough_lookback=config.previous_trough_lookback,
         minimum_trough_separation=config.minimum_trough_separation,
         minimum_intervening_rebound_atr=config.minimum_intervening_rebound_atr,
+        lower_low_tolerance_atr=-config.minimum_lower_low_atr,
+        maximum_lower_low_atr=config.maximum_lower_low_atr,
     )
 
 

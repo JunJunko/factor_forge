@@ -79,12 +79,15 @@ def run_v2_origin_event_study(
         events["support_v2__pre_b_present"].fillna(False),
         "S1_pre_b_support", "S0_no_pre_b_support",
     )
+    geometry_candidate = labeled["div_v2__geometry_candidate"].astype(
+        "boolean"
+    ).fillna(False)
+    event_candidate = labeled["div_v2__event_candidate"].astype(
+        "boolean"
+    ).fillna(False)
     pairs = match_v2_events(
         labeled, events, config,
-        control_mask=(
-            labeled["div_v2__geometry_candidate"].fillna(False)
-            & ~labeled["div_v2__event_candidate"].fillna(False)
-        ),
+        control_mask=geometry_candidate & ~event_candidate,
         match_fields=V2_MATCH_FIELDS,
     )
     return _assemble_result(events, pairs, config, study_kind="origin_geometry_placebo")
