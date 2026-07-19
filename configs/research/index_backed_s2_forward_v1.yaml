@@ -1,0 +1,57 @@
+experiment: index_backed_s2_forward_v1
+status: preregistered_pending_freeze
+source: tushare_official_etf_index_weight
+history_start: "2023-01-01"
+history_end: "2026-07-17"
+selection_cutoff: "2026-07-17"
+training_cutoff: "2026-07-17"
+oos_start: "2026-07-20"
+stock_panels:
+  - data/versions/data_v1_20260710T115133Z_208e9fc8/curated/stock_daily_panel.parquet
+  - data/versions/data_v1_20260715T053637Z_77138057/curated/stock_daily_panel.parquet
+  - data/versions/data_v1_20260717T142755Z_7042ceab/curated/stock_daily_panel.parquet
+data:
+  recent_selection_sessions: 20
+  minimum_adv_cny: 50000000
+  minimum_aum_cny: 1000000000
+  minimum_weight_months: 36
+  minimum_members: 8
+  membership_lag_sessions: 1
+  allowed_index_suffixes: [.CSI, .SH, .SZ]
+  minimum_mapping_correlation: 0.80
+model:
+  policy: S2_nonlinear_overlay
+  hgb_learning_rate: 0.05
+  hgb_max_iter: 60
+  hgb_max_depth: 3
+  hgb_l2_regularization: 10.0
+  minimum_train_days: 100
+  validation_days: 20
+  test_days: 20
+  embargo_days: 11
+  minimum_train_rows: 20000
+  concept_overlay_weight: 0.20
+  seed: 42
+execution:
+  baseline: R4_rank_buffer
+  top_n: 3
+  holding_days: 5
+  sleeves: 5
+  entry: T_plus_1_open
+  early_exit: false
+  roundtrip_cost_bps: [20, 40]
+freeze:
+  minimum_history_days: 720
+  immutable_after_freeze:
+    - feature_columns
+    - model_hyperparameters
+    - concept_overlay_weight
+    - universe_mapping
+    - transaction_costs
+    - execution_rules
+  any_change_restarts_oos_clock: true
+notes:
+  - DC concept membership before 2024-12-27 is unavailable and is not backfilled with current members.
+  - Official ETF tracking indices provide exact executable mappings.
+  - Monthly index constituent snapshots are lagged by one trading session.
+  - Historical walk-forward results remain development evidence; untouched OOS begins on 2026-07-20.

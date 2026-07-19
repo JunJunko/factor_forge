@@ -1,0 +1,38 @@
+experiment: concept_etf_r4_concentration_v1
+status: discovery_only_touched_history
+signal_panel: artifacts/concept_etf_live_signal/live_signal_20260717_20260717T144837Z/latest_signal_panel.parquet
+start: "2025-07-01"
+end: "2026-07-14"
+roundtrip_cost_bps: [20, 40]
+primary_variants:
+  - R4_B_concentration
+  - R4_C_correlation
+variants:
+  - R4_A_base
+  - R4_B_concentration
+  - R4_C_correlation
+constraints:
+  maximum_sleeves_per_etf: 3
+  maximum_aggregate_etf_weight: 0.20
+  aggregate_cap_scope: rebalanced_etfs_at_each_sleeve_execution
+  maximum_aggregate_cluster_weight: 0.30
+  correlation_window: 60
+  correlation_minimum_observations: 40
+  maximum_pairwise_correlation: 0.75
+robustness:
+  excluded_cpo_etf: 515880.SH
+execution:
+  entry: T_plus_1_open
+  holding_days: 5
+  early_exit: false
+  rank_buffer: true
+  inverse_volatility: true
+  per_sleeve_maximum_etf_weight: 0.30
+acceptance:
+  minimum_positive_sleeves_vs_r4a: 4
+  maximum_drawdown_deterioration: 0.0
+  maximum_positive_profit_share: 0.30
+  maximum_turnover_multiple: 1.20
+  require_positive_total_excess_vs_r4a_at_20_and_40bps: true
+  require_positive_excess_vs_r4a_after_excluding_cpo: true
+  note: Historical interval is already inspected. Passing only allows a fresh forward-shadow clock.

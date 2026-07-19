@@ -1,0 +1,55 @@
+version: concept_etf_forward_v1
+frozen_at: '2026-07-17'
+historical_data_cutoff: '2026-07-14'
+status: preregistered_shadow
+universe: all
+etf_codes:
+  - 159819.SZ
+  - 159825.SZ
+  - 159869.SZ
+  - 159992.SZ
+  - 512690.SH
+  - 512880.SH
+  - 515790.SH
+  - 515880.SH
+  - 516150.SH
+  - 517520.SH
+  - 562500.SH
+signal:
+  momentum_20d_weight: 0.6
+  momentum_60d_weight: 0.4
+  top_n: 3
+  maximum_one_etf_per_cluster: true
+  compute_at: close
+  execute_at: next_trade_open
+rebalance:
+  frequency: weekly
+  rule: last_available_trading_day_of_week
+portfolios:
+  - P0_equal_weight
+  - P1_etf_momentum
+  - P2_breadth_overlay
+  - P3_rrg_filter
+overlays:
+  P2_breadth_overlay:
+    condition: common_breadth_delta_smooth5 < 0 and rs_momentum_5d < 0
+    action: halve_affected_etf_weight_and_hold_cash
+  P3_rrg_filter:
+    allowed_quadrants: [leading, improving]
+    action: unfilled_slots_remain_cash
+costs:
+  base_roundtrip_bps: 20
+  stress_roundtrip_bps: 40
+forward_window:
+  minimum_months: 12
+  interim_review_months: 6
+pass_rules:
+  P1_mean_net_excess_positive: true
+  P1_positive_month_fraction_minimum: 0.6666667
+  P1_rank_ic_same_direction_horizons: [5, 10, 20]
+  maximum_single_etf_profit_contribution: 0.30
+  P2_incremental_vs_P1_positive: true
+  P2_positive_quarter_fraction_minimum: 0.6666667
+notes:
+  - Historical data through 2026-07-14 has already been inspected and cannot be reused as untouched confirmation.
+  - Any parameter or universe change starts a new forward confirmation clock.

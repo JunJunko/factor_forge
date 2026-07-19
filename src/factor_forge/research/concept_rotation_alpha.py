@@ -26,7 +26,12 @@ def load_dc_snapshot(
     root: str | Path, *, trade_dates: Iterable[pd.Timestamp] | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     root = Path(root)
-    index = pd.read_parquet(root / "index_monthly")
+    # Read only the fields used below. Historical monthly files contain an
+    # all-null ``level`` column in some partitions and a string column in
+    # others, which Arrow cannot unify even though the field is irrelevant.
+    index = pd.read_parquet(
+        root / "index_monthly", columns=["trade_date", "ts_code", "name", "idx_type"]
+    )
     index = index.loc[index["idx_type"].eq("概念板块")].drop_duplicates(
         ["trade_date", "ts_code"], keep="last"
     ).rename(columns={"ts_code": "concept_code", "name": "concept_name"})
@@ -106,7 +111,9 @@ def latest_membership_backfill(
     return dates.merge(latest_index, how="cross"), dates.merge(latest_members, how="cross")
 
 
-def prepare_stock_panel(panel: pd.DataFrame) -> pd.DataFrame:
+def prepare_stock_panel(panel: pd.DataFrame, *, breadth_weight_lag: int = 0) -> pd.DataFrame:
+    if breadth_weight_lag not in (0, 1):
+        raise ValueError("breadth_weight_lag must be 0 or 1")
     stocks = panel.sort_values(["ts_code", "trade_date"]).copy()
     stocks["trade_date"] = pd.to_datetime(stocks["trade_date"])
     grouped = stocks.groupby("ts_code", sort=False)
@@ -118,6 +125,8 @@ def prepare_stock_panel(panel: pd.DataFrame) -> pd.DataFrame:
         stocks["breadth_mv_cny"] = free_float.where(free_float.gt(0), stocks["circ_mv_cny"])
     else:
         stocks["breadth_mv_cny"] = stocks["circ_mv_cny"]
+    if breadth_weight_lag:
+        stocks["breadth_mv_cny"] = stocks.groupby("ts_code", sort=False)["breadth_mv_cny"].shift(1)
     stocks["amount_ma20"] = grouped["amount_cny"].transform(
         lambda values: values.rolling(20, min_periods=18).mean()
     )
@@ -138,8 +147,9 @@ def build_concept_dataset(
     maximum_members: int = 500,
     minimum_age: int = 60,
     maximum_churn: float = 0.30,
+    breadth_weight_lag: int = 0,
 ) -> tuple[pd.DataFrame, pd.DataFrame, dict]:
-    stocks = prepare_stock_panel(stock_panel)
+    stocks = prepare_stock_panel(stock_panel, breadth_weight_lag=breadth_weight_lag)
     supported = members["ts_code"].isin(set(stocks["ts_code"].astype(str)))
     member_totals = members.groupby(["trade_date", "concept_code"], observed=True).size().rename("source_member_count")
     stock_columns = [

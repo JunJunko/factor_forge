@@ -1,0 +1,46 @@
+version: 1
+name: index_backed_r4_timing_overlay_v1
+
+# Freeze both upstream artifacts.  This experiment does not refit R4 or timing.
+r4_artifact: artifacts/index_backed_r4_strict_pit/strict_r7_20260719T023929Z
+r4_variant: strict_with_delisted
+timing_artifact: artifacts/timing_position_models/timing_position_model_oos_2025_v1_20260714T131917Z_3efc7c56
+timing_stable_factor_config: configs/ml/timing_stable_factors_oos_2025_v1.yaml
+
+primary_sample:
+  name: strict_oos_2025
+  start: "2025-01-01"
+
+diagnostic_sample:
+  name: train_overlap_diagnostic
+  start: "2024-03-01"
+  end: "2024-12-31"
+
+base_roundtrip_cost_bps: [20, 40]
+timing_one_way_cost_bps: 3.0
+
+# Preregistered before reading the overlay outcome.  No threshold/grid search.
+policies:
+  - name: no_timing
+    kind: constant
+    exposure: 1.0
+  - name: timing_full_0_100
+    kind: linear_floor
+    floor: 0.0
+  - name: timing_soft_floor_50
+    kind: linear_floor
+    floor: 0.5
+  - name: timing_tail_guard_50
+    kind: tail_guard
+    weak_signal_max: 0.25
+    defensive_exposure: 0.5
+    normal_exposure: 1.0
+
+decision:
+  # A timing policy passes only if it improves both return and drawdown at both
+  # frozen R4 cost assumptions in the strict 2025+ OOS interval.
+  require_both_cost_scenarios: true
+  require_total_return_improvement: true
+  require_drawdown_improvement: true
+
+output_root: artifacts/index_backed_r4_timing_overlay

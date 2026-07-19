@@ -1,0 +1,54 @@
+experiment: index_backed_s2_pit_v1
+status: preregistered_development_diagnostic
+history_start: "2023-01-01"
+history_end: "2026-07-17"
+stock_panels:
+  - data/versions/data_v1_20260710T115133Z_208e9fc8/curated/stock_daily_panel.parquet
+  - data/versions/data_v1_20260715T053637Z_77138057/curated/stock_daily_panel.parquet
+  - data/versions/data_v1_20260717T142755Z_7042ceab/curated/stock_daily_panel.parquet
+data:
+  allowed_index_suffixes: [.CSI, .SH, .SZ]
+  minimum_weight_months: 36
+  minimum_members: 8
+  membership_lag_sessions: 1
+pit_universe:
+  refresh: prior_month_end
+  minimum_listing_sessions: 60
+  liquidity_window: 20
+  minimum_liquidity_observations: 18
+  minimum_adv_cny: 50000000
+  minimum_aum_cny: 1000000000
+  correlation_window: 120
+  minimum_correlation_observations: 60
+  minimum_mapping_correlation: 0.80
+model:
+  policy: S2_nonlinear_overlay
+  ridge_alpha: 20.0
+  hgb_learning_rate: 0.05
+  hgb_max_iter: 60
+  hgb_max_depth: 3
+  hgb_l2_regularization: 10.0
+  minimum_train_days: 100
+  validation_days: 20
+  test_days: 20
+  embargo_days: 11
+  minimum_train_rows: 20000
+  state_prior_weight: 0.20
+  concept_overlay_weight: 0.20
+  seed: 42
+execution:
+  baseline: R4_rank_buffer
+  holding_days: 5
+  sleeves: 5
+  entry: T_plus_1_open
+  early_exit: false
+  roundtrip_cost_bps: [20, 40]
+diagnostics:
+  minimum_history_days: 720
+  no_parameter_tuning: true
+  no_sign_inversion: true
+notes:
+  - Dynamic ETF selection uses only data observable at the prior month end.
+  - Delisted ETFs are retained when the source supplies their historical records.
+  - R5-B diagnoses sign reversal but cannot alter frozen S2 parameters.
+  - Results remain development evidence and do not modify the frozen forward experiment.

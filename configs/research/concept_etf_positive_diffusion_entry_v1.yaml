@@ -1,0 +1,43 @@
+experiment: concept_etf_positive_diffusion_entry_v1
+status: discovery_only
+signal_panel: artifacts/concept_etf_live_signal/live_signal_20260717_20260717T144837Z/latest_signal_panel.parquet
+start: "2025-07-01"
+end: "2026-07-14"
+roundtrip_cost_bps: [20, 40]
+primary_policy: B1_fixed_diffusion
+policies:
+  B0_price: score_B0_price
+  B1_fixed_diffusion: score_B1_fixed_diffusion
+  B2_learned_diffusion: score_B2_learned_diffusion
+  B3_placebo: score_B3_placebo
+diffusion:
+  fixed_weight: 0.20
+  component_weights:
+    common_member_diffusion_rank: 0.50
+    diffusion_acceleration_rank: 0.30
+    positive_persistence_rank: 0.20
+  all_components_positive_direction: true
+learned_blend:
+  model: positive_ridge
+  ridge_alpha: 10.0
+  maximum_diffusion_weight: 0.30
+  minimum_train_days: 60
+  validation_days: 15
+  test_days: 15
+  embargo_days: 6
+  minimum_train_rows: 400
+execution:
+  entry: T_plus_1_open
+  holding_days: 5
+  early_exit: false
+  rank_buffer: true
+  inverse_volatility: true
+  maximum_etf_weight: 0.30
+acceptance:
+  minimum_positive_sleeves: 4
+  maximum_drawdown_deterioration: 0.0
+  maximum_positive_profit_share: 0.30
+  must_beat_placebo: true
+  require_20_and_40bps_positive_excess: true
+  maximum_learned_boundary_fraction: 0.50
+  note: B1 is the primary test. B2 is reported separately and cannot rescue a failed B1.

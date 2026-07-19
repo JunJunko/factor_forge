@@ -1,0 +1,39 @@
+version: 1
+name: index_backed_r4_exit_state_v1
+status: preregistered_exploratory
+
+base_r7_config: configs/research/index_backed_r4_strict_pit_v1.yaml
+base_r7_artifact: artifacts/index_backed_r4_strict_pit/strict_r7_20260719T023929Z
+data_root: data/index_backed_r4_strict_pit
+output_root: artifacts/index_backed_r4_exit_state
+
+evaluation:
+  start: "2024-02-29"
+  end: "2026-07-17"
+  roundtrip_cost_bps: [20, 40]
+
+policies:
+  - E0_fixed
+  - E1_price_confirmed
+  - E2_price_diffusion_state
+
+exit_rules:
+  holding_days: 5
+  execution_delay_days: 1
+  retention_rank: 6
+  severe_rank: 10
+  diffusion_rank_max: 0.30
+  confirmation_days: 2
+  reduction_fraction: 0.50
+
+decision:
+  minimum_mdd_improvement: 0.02
+  maximum_total_return_drag: 0.02
+  require_expected_shortfall_improvement: true
+  maximum_false_exit_rate: 0.40
+  require_both_cost_scenarios: true
+
+notes:
+  - All exit features are observed at signal-date close and execute next session open.
+  - Thresholds are fixed before running E0/E1/E2; no grid search is allowed.
+  - The R7 interval has already been inspected, so this is exploratory evidence rather than virgin OOS validation.

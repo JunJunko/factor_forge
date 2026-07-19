@@ -26,6 +26,19 @@ def test_stock_can_belong_to_multiple_concepts_without_duplicate_stock_panel():
     assert result.groupby("ts_code")["stock_return_20d"].count().tolist() == [5, 5]
 
 
+def test_breadth_weight_can_be_lagged_without_changing_return_weight():
+    dates = pd.bdate_range("2025-01-01", periods=3)
+    panel = pd.DataFrame({
+        "trade_date": dates, "ts_code": "A", "adj_close": [10, 11, 12],
+        "adj_open": [10, 11, 12], "circ_mv_cny": [100, 200, 300],
+        "amount_cny": 1e8, "is_tradeable": True,
+    })
+    result = prepare_stock_panel(panel, breadth_weight_lag=1)
+    assert pd.isna(result.iloc[0]["breadth_mv_cny"])
+    assert result.iloc[1]["breadth_mv_cny"] == 100
+    assert result.iloc[1]["cap_lag1"] == 100
+
+
 def test_daily_jaccard_dedup_keeps_only_one_near_duplicate():
     date = pd.Timestamp("2025-01-02")
     features = pd.DataFrame({

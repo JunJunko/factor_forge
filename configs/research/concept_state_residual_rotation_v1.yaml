@@ -1,0 +1,55 @@
+experiment: concept_state_residual_rotation_v1
+status: discovery_only_short_history
+concept_features: artifacts/concept_etf_live_signal/live_signal_20260717_20260717T144837Z/latest_concept_features.parquet
+signal_panel: artifacts/concept_etf_live_signal/live_signal_20260717_20260717T144837Z/latest_signal_panel.parquet
+model_start: "2024-12-30"
+end: "2026-07-14"
+roundtrip_cost_bps: [20, 40]
+primary_policy: S1_linear_overlay
+policies:
+  S0_etf_r4: score_S0_etf_r4
+  S1_linear_overlay: score_S1_linear_overlay
+  S2_nonlinear_overlay: score_S2_nonlinear_overlay
+  S3_multihorizon_overlay: score_S3_multihorizon_overlay
+  S4_two_stage_overlay: score_S4_two_stage_overlay
+  S5_state_placebo_overlay: score_S5_state_placebo_overlay
+model:
+  ridge_alpha: 20.0
+  hgb_learning_rate: 0.05
+  hgb_max_iter: 60
+  hgb_max_depth: 3
+  hgb_l2_regularization: 10.0
+  minimum_train_days: 100
+  validation_days: 20
+  test_days: 20
+  embargo_days: 11
+  minimum_train_rows: 20000
+  state_prior_weight: 0.20
+  concept_overlay_weight: 0.20
+  seed: 42
+labels:
+  definition: forward_excess_minus_same_date_same_rrg_state_mean
+  horizons: [3, 5, 10]
+  horizon_weights:
+    3: 0.30
+    5: 0.40
+    10: 0.30
+execution:
+  portfolio: R4_rank_buffer
+  entry: T_plus_1_open
+  holding_days: 5
+  early_exit: false
+diagnostics:
+  minimum_history_days: 720
+  minimum_positive_rank_ic_horizons: 2
+  minimum_positive_top_bottom_horizons: 2
+acceptance:
+  minimum_positive_sleeves_vs_s0: 4
+  maximum_drawdown_deterioration: 0.0
+  maximum_positive_profit_share: 0.30
+  minimum_effective_profit_contributors: 4.0
+  maximum_turnover_multiple: 1.20
+  minimum_positive_cluster_exclusion_fraction: 0.80
+  require_20_and_40bps_positive_excess: true
+  must_beat_within_state_placebo: true
+  note: S1 is primary. S2-S4 cannot rescue a failed S1. Passing requires the 720-day history gate.

@@ -1,0 +1,28 @@
+﻿concept_code,concept_name,cluster,match_type,etf_code,etf_name,benchmark,observations,adv_cny,aum_cny,last_trade_date,eligible,gate_reason
+BK1111.DC,AIGC概念,ai_software,approximate,159819.SZ,易方达中证人工智能主题ETF,中证人工智能主题指数收益率×100%,20,410436853.45,16728069549.261002,2025-06-30,True,PASS
+BK1111.DC,AIGC概念,ai_software,approximate,512930.SH,平安中证人工智能主题ETF,中证人工智能主题指数收益率×100%,20,84088503.69999999,2055318250.539,2025-06-30,True,PASS
+BK1111.DC,AIGC概念,ai_software,approximate,515070.SH,华夏中证人工智能主题ETF,中证人工智能主题指数收益率×100%,20,117280816.75,5584220238.1050005,2025-06-30,True,PASS
+BK1128.DC,CPO概念,ai_hardware,proxy,159994.SZ,银华中证5G通信主题ETF,中证5G通信主题指数×100%,20,32539338.1,1510455623.5930002,2025-06-30,False,ADV below gate
+BK1128.DC,CPO概念,ai_hardware,proxy,515880.SH,国泰中证全指通信设备ETF,中证全指通信设备指数收益率×100%,20,216481375.94999996,2700750222.0039997,2025-06-30,True,PASS
+BK1184.DC,人形机器人,smart_manufacturing,approximate,159530.SZ,易方达国证机器人产业ETF,国证机器人产业指数收益率×100%,20,108534493.35000001,1655844214.3480003,2025-06-30,True,PASS
+BK1184.DC,人形机器人,smart_manufacturing,approximate,159770.SZ,天弘中证机器人ETF,中证机器人指数×100%,20,186965595.15,5781961493.846,2025-06-30,True,PASS
+BK1184.DC,人形机器人,smart_manufacturing,approximate,562500.SH,华夏中证机器人ETF,中证机器人指数收益率×100%,20,603961956.5999999,14473967349.750002,2025-06-30,True,PASS
+BK0588.DC,光伏设备,new_energy,exact,159857.SZ,天弘中证光伏产业ETF,中证光伏产业指数×100%,20,75053749.89999999,2135404931.8,2025-06-30,True,PASS
+BK0588.DC,光伏设备,new_energy,exact,515790.SH,华泰柏瑞中证光伏产业ETF,中证光伏产业指数收益率×100%,20,275178465.05,9997774956.0,2025-06-30,True,PASS
+BK0588.DC,光伏设备,new_energy,exact,516290.SH,汇添富中证光伏产业ETF,中证光伏产业指数收益率×100%,20,8557740.4,275365519.955,2025-06-30,False,ADV below gate; AUM below gate
+BK1106.DC,创新药,healthcare,exact,159992.SZ,银华中证创新药产业ETF,中证创新药产业指数收益率×100%,20,451136147.95,9447911523.864,2025-06-30,True,PASS
+BK1106.DC,创新药,healthcare,exact,515120.SH,广发中证创新药产业ETF,中证创新药产业指数收益率×100%,20,161083088.9,3383061183.452,2025-06-30,True,PASS
+BK1106.DC,创新药,healthcare,exact,516080.SH,易方达中证创新药产业ETF,中证创新药产业指数收益率×100%,20,12645121.900000002,440358866.4,2025-06-30,False,ADV below gate; AUM below gate
+BK0896.DC,白酒,consumer,approximate,159995.SZ,华夏国证半导体芯片ETF,国证半导体芯片指数收益率×100%,20,445432839.99999994,25306220497.379997,2025-06-30,True,PASS
+BK0896.DC,白酒,consumer,approximate,512690.SH,鹏华中证酒ETF,中证酒指数收益率×100%,20,686705358.5999999,12633603846.57,2025-06-30,True,PASS
+BK0578.DC,稀土永磁,materials,approximate,159713.SZ,富国中证稀土产业ETF,中证稀土产业指数收益率×100%,20,35282549.3,368707303.45199996,2025-06-30,False,ADV below gate; AUM below gate
+BK0578.DC,稀土永磁,materials,approximate,516150.SH,嘉实中证稀土产业ETF,中证稀土产业指数收益率×100%,20,113743744.3,2427175476.0,2025-06-30,True,PASS
+BK0509.DC,网络游戏,ai_software,approximate,159869.SZ,华夏中证动漫游戏ETF,中证动漫游戏指数收益率×100%,20,615620632.2000002,7459467368.941,2025-06-30,True,PASS
+BK0509.DC,网络游戏,ai_software,approximate,516010.SH,国泰中证动漫游戏ETF,中证动漫游戏指数收益率×100%,20,144793995.1,2136976188.9999998,2025-06-30,True,PASS
+BK0888.DC,农业种植,agriculture,approximate,159825.SZ,富国中证农业主题ETF,中证农业主题指数收益率×100%,20,52513411.699999996,1869991500.8189998,2025-06-30,True,PASS
+BK0888.DC,农业种植,agriculture,approximate,516550.SH,嘉实中证大农业ETF,中证大农业指数收益率×100%,20,6966759.0,195120576.0,2025-06-30,False,ADV below gate; AUM below gate
+BK0547.DC,黄金概念,precious_metals,proxy,159321.SZ,华安中证沪深港黄金产业股票ETF,中证沪深港黄金产业股票指数收益率×100%,20,11831553.4,113240954.565,2025-06-30,False,ADV below gate; AUM below gate
+BK0547.DC,黄金概念,precious_metals,proxy,517520.SH,永赢中证沪深港黄金产业股票ETF,中证沪深港黄金产业股票指数收益率×100%,20,187423896.29999998,4774627536.000001,2025-06-30,True,PASS
+BK0711.DC,券商概念,financials,exact,159841.SZ,天弘中证全指证券公司ETF,中证全指证券公司指数×100%,20,225302658.70000002,5442276257.414999,2025-06-30,True,PASS
+BK0711.DC,券商概念,financials,exact,512000.SH,华宝中证全指证券公司ETF,中证全指证券公司指数×100%,20,842015515.7,23115855003.738003,2025-06-30,True,PASS
+BK0711.DC,券商概念,financials,exact,512880.SH,国泰中证全指证券公司ETF,中证全指证券公司指数×100%,20,1672336366.2500002,29843051123.552002,2025-06-30,True,PASS

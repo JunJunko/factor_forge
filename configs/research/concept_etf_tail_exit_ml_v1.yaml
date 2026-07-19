@@ -1,0 +1,64 @@
+experiment: concept_etf_tail_exit_ml_v1
+status: discovery_only
+model: sklearn_hist_gradient_boosting_quantile_regressor
+signal_panel: artifacts/concept_etf_live_signal/live_signal_20260717_20260717T144837Z/latest_signal_panel.parquet
+concept_features: artifacts/concept_etf_live_signal/live_signal_20260717_20260717T144837Z/latest_concept_features.parquet
+start: "2025-07-01"
+end: "2026-07-14"
+roundtrip_cost_bps: [20, 40]
+policies: [T0_fixed, T1_tail_ml, T2_tail_placebo]
+label:
+  target: worst_open_return_after_next_open
+  horizon_trading_days: 2
+  loss_threshold: -0.03
+  conditional_quantile: 0.10
+  note: For positions with one scheduled holding day left, use the one-day worst return only.
+features:
+  - etf_return_1d
+  - etf_return_3d
+  - etf_return_5d
+  - etf_momentum_20d
+  - etf_momentum_60d
+  - etf_momentum_acceleration
+  - volatility_20d
+  - amount_ratio_5_20
+  - concept_return_1d
+  - concept_return_5d
+  - concept_return_20d
+  - breadth_float
+  - breadth_equal_minus_float
+  - common_breadth_delta_smooth5
+  - breadth_acceleration_5d
+  - breadth_negative_fraction_3d
+  - common_delta_rank
+  - rs_momentum_5d
+  - membership_churn_5d
+  - rrg_weakening
+  - rrg_lagging
+  - holding_age
+  - days_remaining
+walk_forward:
+  minimum_train_days: 60
+  validation_days: 15
+  test_days: 15
+  embargo_days: 6
+  minimum_train_rows: 250
+  minimum_validation_rows: 40
+execution:
+  holding_days: 5
+  early_exit_cost_bps: 20
+  decision_at: T_close
+  trade_at: T_plus_1_open
+  confirmation_days: 1
+  post_exit: cash_until_scheduled_rebalance
+acceptance:
+  compare_to: T0_fixed
+  minimum_drawdown_improvement: 0.01
+  maximum_total_return_drag: 0.03
+  minimum_tail_precision: 0.20
+  minimum_precision_lift_over_base: 1.50
+  minimum_tail_recall: 0.20
+  require_expected_shortfall_improvement: true
+  must_beat_placebo_drawdown: true
+  require_20_and_40bps: true
+  note: Historical interval is touched; passing remains discovery evidence only.

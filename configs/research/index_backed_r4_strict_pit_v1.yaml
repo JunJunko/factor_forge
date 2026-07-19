@@ -1,0 +1,45 @@
+experiment: index_backed_r4_strict_pit_v1
+status: preregistered_pit_repair
+history_start: "2023-01-01"
+history_end: "2026-07-17"
+weight_history_start: "2020-01-01"
+stock_panels:
+  - data/versions/data_v1_20260710T115133Z_208e9fc8/curated/stock_daily_panel.parquet
+  - data/versions/data_v1_20260715T053637Z_77138057/curated/stock_daily_panel.parquet
+  - data/versions/data_v1_20260717T142755Z_7042ceab/curated/stock_daily_panel.parquet
+source_snapshot: data/index_backed_s2_pit/pit_index_backed_20230101_20260717_355dfa37f2
+data:
+  minimum_weight_months_at_selection: 36
+  minimum_index_members: 8
+  index_weight_availability_lag_sessions: 1
+  membership_lag_sessions: 1
+  share_availability_lag_sessions: 1
+pit_universe:
+  refresh: prior_month_end
+  minimum_listing_sessions: 60
+  liquidity_window: 20
+  minimum_liquidity_observations: 18
+  minimum_adv_cny: 50000000
+  minimum_aum_cny: 1000000000
+  correlation_window: 120
+  minimum_correlation_observations: 60
+  minimum_mapping_correlation: 0.80
+execution:
+  policy: R4_rank_buffer
+  holding_days: 5
+  sleeves: 5
+  entry: T_plus_1_open
+  roundtrip_cost_bps: [20, 40]
+evaluation:
+  aligned_start: "2024-02-29"
+  minimum_history_days: 720
+repair_policy:
+  delisted_mapping: exact_normalized_fund_benchmark_only
+  fuzzy_mapping_allowed: false
+  parameter_tuning_allowed: false
+  s2_used: false
+notes:
+  - Index history eligibility is evaluated at every selection date.
+  - Same-day fund share observations are unavailable until the next session.
+  - Unmapped or ambiguous delisted ETFs are conservatively excluded and audited.
+  - Original five-day R4 parameters remain frozen.

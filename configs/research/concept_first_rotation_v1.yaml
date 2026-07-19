@@ -1,0 +1,57 @@
+experiment: concept_first_rotation_v1
+status: discovery_only_short_history
+concept_features: artifacts/concept_etf_live_signal/live_signal_20260717_20260717T144837Z/latest_concept_features.parquet
+signal_panel: artifacts/concept_etf_live_signal/live_signal_20260717_20260717T144837Z/latest_signal_panel.parquet
+model_start: "2024-12-30"
+end: "2026-07-14"
+roundtrip_cost_bps: [20, 40]
+primary_policy: C1_concept_linear_5d
+policies:
+  C0_etf_r4: score_C0_etf_r4
+  C1_concept_linear_5d: score_C1_linear_5d
+  C2_concept_nonlinear_5d: score_C2_nonlinear_5d
+  C3_multihorizon: score_C3_multihorizon
+  C4_mapping_quality: score_C4_mapping_quality
+  C5_state_placebo: score_C5_state_placebo
+model:
+  features: concept_first_v1
+  horizons: [3, 5, 10]
+  horizon_weights:
+    3: 0.30
+    5: 0.40
+    10: 0.30
+  ridge_alpha: 20.0
+  hgb_learning_rate: 0.05
+  hgb_max_iter: 60
+  hgb_max_depth: 3
+  hgb_l2_regularization: 10.0
+  minimum_train_days: 100
+  validation_days: 20
+  test_days: 20
+  embargo_days: 11
+  minimum_train_rows: 20000
+  seed: 42
+mapping_quality:
+  multihorizon_weight: 0.80
+  quality_weight: 0.20
+  correlation_window: 60
+  tracking_residual_window: 20
+execution:
+  portfolio: R4_rank_buffer
+  entry: T_plus_1_open
+  holding_days: 5
+  early_exit: false
+diagnostics:
+  minimum_history_days: 720
+  minimum_positive_rank_ic_horizons: 2
+  minimum_positive_top_bottom_horizons: 2
+acceptance:
+  minimum_positive_sleeves_vs_c0: 4
+  maximum_drawdown_deterioration: 0.0
+  maximum_positive_profit_share: 0.30
+  maximum_turnover_multiple: 1.20
+  minimum_effective_profit_contributors: 4.0
+  minimum_positive_cluster_exclusion_fraction: 0.80
+  require_20_and_40bps_positive_excess: true
+  must_beat_state_placebo: true
+  note: C1 is primary. C2-C4 cannot rescue a failed C1. Passing historical gates only starts a new forward clock.

@@ -72,19 +72,22 @@ def main() -> None:
     parser.add_argument("--start", default="20241230")
     parser.add_argument("--end", default="20250627")
     parser.add_argument("--output-root", default="data/concept_rotation")
+    parser.add_argument("--output-name", help="override immutable snapshot directory name")
     parser.add_argument("--workers", type=int, default=4)
     args = parser.parse_args()
 
-    output = Path(args.output_root) / f"dc_{args.start}_{args.end}_by_date"
+    output = Path(args.output_root) / (args.output_name or f"dc_{args.start}_{args.end}_by_date")
     index_dir = output / "index_monthly"
     member_dir = output / "members_by_concept"
     index_dir.mkdir(parents=True, exist_ok=True)
     member_dir.mkdir(parents=True, exist_ok=True)
     index = fetch_index(args.start, args.end, index_dir)
-    # The endpoint's Chinese labels can be mojibaked by upstream transports.
-    # Concept boards are the type with the largest distinct board universe.
-    concept_type = index.groupby("idx_type", observed=True)["ts_code"].nunique().idxmax()
-    concepts = frozenset(index.loc[index["idx_type"].eq(concept_type), "ts_code"].dropna().astype(str))
+    concept_label = "".join(map(chr, (27010, 24565, 26495, 22359)))
+    concept_mask = index["idx_type"].astype(str).eq(concept_label)
+    if not concept_mask.any():
+        labels = sorted(index["idx_type"].dropna().astype(str).unique())
+        raise ValueError(f"concept board label not found: {labels}")
+    concepts = frozenset(index.loc[concept_mask, "ts_code"].dropna().astype(str))
     calendar = provider().query(
         "trade_cal", exchange="SSE", start_date=args.start, end_date=args.end,
         fields="cal_date,is_open",

@@ -1,0 +1,58 @@
+experiment: concept_etf_denoised_diffusion_v1
+status: discovery_only
+signal_panel: artifacts/concept_etf_live_signal/live_signal_20260717_20260717T144837Z/latest_signal_panel.parquet
+concept_features: artifacts/concept_etf_live_signal/live_signal_20260717_20260717T144837Z/latest_concept_features.parquet
+start: "2025-07-01"
+end: "2026-07-14"
+roundtrip_cost_bps: [20, 40]
+primary_policy: D1_confirmation
+policies:
+  D0_price: score_D0_price
+  D1_confirmation: score_D1_confirmation
+  D2_ten_percent_boost: score_D2_ten_percent_boost
+  D3_learned: score_D3_learned
+  D4_placebo: score_D4_placebo
+denoising:
+  cross_section_winsor_limits: [0.05, 0.95]
+  rolling_median_days: 3
+  ewma_span: 3
+  control_ridge_alpha: 5.0
+  confirmation_percentile: 0.30
+  controls:
+    - price_momentum
+    - breadth_level
+    - log_concept_amount
+    - member_count
+    - membership_churn
+learned_blend:
+  model: positive_ridge_with_blocked_stability
+  ridge_alpha: 10.0
+  maximum_diffusion_weight: 0.10
+  stability_blocks: 5
+  minimum_stability_fraction: 0.60
+  minimum_train_days: 60
+  validation_days: 15
+  test_days: 15
+  embargo_days: 6
+  minimum_train_rows: 400
+execution:
+  entry: T_plus_1_open
+  holding_days: 5
+  early_exit: false
+  rank_buffer: true
+  inverse_volatility: true
+  maximum_etf_weight: 0.30
+diagnostics:
+  horizons: [1, 3, 5, 10]
+  require_positive_mean_rank_ic_horizons: 2
+  require_positive_top_bottom_horizons: 2
+acceptance:
+  minimum_positive_sleeves: 4
+  maximum_drawdown_deterioration: 0.0
+  maximum_positive_profit_share: 0.30
+  require_20_and_40bps_positive_excess: true
+  must_beat_placebo: true
+  note: D1 is primary. D2 and D3 are secondary and cannot rescue a failed D1.
+data_limitations:
+  active_member_filter: not_in_frozen_etf_signal_panel
+  note: Point-in-time stock flags exist upstream but are deferred to a separately versioned feature rebuild.

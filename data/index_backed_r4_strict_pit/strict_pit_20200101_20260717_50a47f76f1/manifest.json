@@ -1,0 +1,16 @@
+{
+  "created_at": "2026-07-19T02:34:29.948707+00:00",
+  "status": "IMMUTABLE_R7_STRICT_PIT_SNAPSHOT",
+  "config": "D:\\pyworkspace\\factor_forge\\configs\\research\\index_backed_r4_strict_pit_v1.yaml",
+  "source_snapshot": "D:\\pyworkspace\\factor_forge\\data\\index_backed_s2_pit\\pit_index_backed_20230101_20260717_355dfa37f2",
+  "weight_history_start": "2020-01-23",
+  "weight_history_end": "2026-06-30",
+  "candidate_etfs": 498,
+  "candidate_indexes": 148,
+  "recovered_delisted_theme_etfs": 24,
+  "unresolved_delisted_etfs": 103,
+  "index_weight_rows": 591743,
+  "fund_daily_rows": 259507,
+  "fund_share_rows": 261029,
+  "fuzzy_mapping_allowed": false
+}

@@ -1,0 +1,36 @@
+{
+  "created_at": "2026-07-17T09:09:37.866374+00:00",
+  "config": "D:\\pyworkspace\\factor_forge\\configs\\research\\concept_etf_rotation_v1.yaml",
+  "config_sha256": "984a8a4bcd69a160653f90d80ee890df572cf5efa5db982ed43b79d6524b7481",
+  "source": "Tushare Pro",
+  "point_in_time_selection_cutoff": "20250630",
+  "validation_start": "20250701",
+  "history_end": "20260714",
+  "candidate_etfs": 27,
+  "selected_etfs": 11,
+  "row_counts": {
+    "fund_basic": 2145,
+    "fund_daily": 10011,
+    "fund_share": 10027,
+    "fund_nav": 10017
+  },
+  "selection_audit": {
+    "minimum_adv_cny": 50000000.0,
+    "minimum_aum_cny": 1000000000.0,
+    "selection_window_days": 20,
+    "themes_requested": 11,
+    "themes_selected": 11
+  },
+  "excluded_themes": [
+    {
+      "concept_code": "BK1166.DC",
+      "concept_name": "低空经济",
+      "reason": "selection_cutoff前没有语义足够接近且满足规模/流动性门槛的ETF"
+    },
+    {
+      "concept_code": "BK1004.DC",
+      "concept_name": "工业母机",
+      "reason": "候选ETF在selection_cutoff时未达到预设规模/流动性门槛"
+    }
+  ]
+}

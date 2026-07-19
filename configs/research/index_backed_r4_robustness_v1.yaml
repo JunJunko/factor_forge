@@ -1,0 +1,38 @@
+experiment: index_backed_r4_robustness_v1
+status: preregistered_development_robustness
+source_artifact: artifacts/index_backed_s2_pit/pit_r5_20260718T144518Z
+evaluation:
+  start: "2024-02-29"
+  end: "2026-07-17"
+baseline:
+  holding_days: 5
+  execution_delay_days: 1
+  selection_count: 4
+  retention_rank: 6
+  maximum_etf_weight: 0.30
+  short_lookback: 20
+  long_lookback: 60
+  short_weight: 0.60
+stress:
+  roundtrip_cost_bps: [0, 20, 40, 60, 80, 100]
+  one_factor_at_a_time:
+    holding_days: [3, 7, 10]
+    execution_delay_days: [2, 3]
+    selection_count: [3, 5]
+    retention_rank: [4, 8]
+    maximum_etf_weight: [0.25, 0.40]
+    momentum_lookbacks:
+      - [10, 40]
+      - [40, 120]
+    short_weight: [0.40, 0.80]
+acceptance:
+  minimum_positive_neighborhood_fraction_20bps: 0.80
+  minimum_positive_neighborhood_fraction_40bps: 0.70
+  minimum_positive_baseline_sleeves: 4
+  minimum_positive_calendar_year_fraction: 0.67
+  maximum_monthly_positive_profit_share: 0.35
+notes:
+  - This is an OFAT robustness test, not a parameter search.
+  - The original 5-day R4 specification remains the baseline regardless of results.
+  - Dynamic ETF mappings and all source signals are reused without modification.
+  - S2 is excluded and the frozen forward experiment is not modified.

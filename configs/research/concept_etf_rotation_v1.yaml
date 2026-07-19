@@ -1,0 +1,74 @@
+version: concept_etf_rotation_v1.1
+snapshot_schema_version: 2
+source: tushare
+history_start: '20241230'
+selection_cutoff: '20250630'
+validation_start: '20250701'
+history_end: '20260714'
+selection_window_days: 20
+minimum_adv_cny: 50000000
+minimum_aum_cny: 1000000000
+minimum_mapping_correlation: 0.45
+themes:
+  - concept_code: BK1111.DC
+    concept_name: AIGC概念
+    cluster: ai_software
+    match_type: approximate
+    candidates: [159819.SZ, 515070.SH, 512930.SH]
+  - concept_code: BK1128.DC
+    concept_name: CPO概念
+    cluster: ai_hardware
+    match_type: proxy
+    candidates: [515880.SH, 159994.SZ]
+  - concept_code: BK1184.DC
+    concept_name: 人形机器人
+    cluster: smart_manufacturing
+    match_type: approximate
+    candidates: [562500.SH, 159770.SZ, 159530.SZ]
+  - concept_code: BK0588.DC
+    concept_name: 光伏设备
+    cluster: new_energy
+    match_type: exact
+    candidates: [515790.SH, 516290.SH, 159857.SZ]
+  - concept_code: BK1106.DC
+    concept_name: 创新药
+    cluster: healthcare
+    match_type: exact
+    candidates: [159992.SZ, 515120.SH, 516080.SH]
+  - concept_code: BK0896.DC
+    concept_name: 白酒
+    cluster: consumer
+    match_type: approximate
+    candidates: [512690.SH, 159995.SZ]
+  - concept_code: BK0578.DC
+    concept_name: 稀土永磁
+    cluster: materials
+    match_type: approximate
+    candidates: [516150.SH, 159713.SZ]
+  - concept_code: BK0509.DC
+    concept_name: 网络游戏
+    cluster: ai_software
+    match_type: approximate
+    candidates: [159869.SZ, 516010.SH]
+  - concept_code: BK0888.DC
+    concept_name: 农业种植
+    cluster: agriculture
+    match_type: approximate
+    candidates: [159825.SZ, 516550.SH]
+  - concept_code: BK0547.DC
+    concept_name: 黄金概念
+    cluster: precious_metals
+    match_type: proxy
+    candidates: [517520.SH, 159321.SZ]
+  - concept_code: BK0711.DC
+    concept_name: 券商概念
+    cluster: financials
+    match_type: exact
+    candidates: [512880.SH, 512000.SH, 159841.SZ]
+excluded_themes:
+  - concept_code: BK1166.DC
+    concept_name: 低空经济
+    reason: selection_cutoff前没有语义足够接近且满足规模/流动性门槛的ETF
+  - concept_code: BK1004.DC
+    concept_name: 工业母机
+    reason: 候选ETF在selection_cutoff时未达到预设规模/流动性门槛

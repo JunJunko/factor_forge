@@ -1,0 +1,22 @@
+{
+  "created_at": "2026-07-18T13:59:10.718889+00:00",
+  "status": "IMMUTABLE_DATA_SNAPSHOT",
+  "source": "Tushare etf_basic/fund_daily/fund_share/index_weight",
+  "config": "D:\\pyworkspace\\factor_forge\\configs\\research\\index_backed_s2_forward_v1.yaml",
+  "config_sha256": "2ea39993d99fe7a2a30b75f5bc2dea3e4ac52bbbd13b1c34c86515f7ee70728b",
+  "history_start": "2023-01-01",
+  "history_end": "2026-07-17",
+  "selection_cutoff": "2026-07-17",
+  "trading_days": 856,
+  "liquid_exact_index_candidates": 76,
+  "selected_exact_mappings": 71,
+  "clusters": 17,
+  "weight_months_min": 36,
+  "weight_months_max": 43,
+  "rows": {
+    "index_weights": 148770,
+    "fund_daily": 55815,
+    "fund_share": 56113
+  },
+  "causality": "monthly index membership is consumed with a one-session lag downstream"
+}
